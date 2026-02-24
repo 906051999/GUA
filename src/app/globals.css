@@ -1,0 +1,304 @@
+@import "tailwindcss";
+
+:root {
+  --cyber-black: #0a0a0a;
+  --cyber-cyan: #00f3ff;
+  --cyber-red: #ff3333;
+  --cyber-gold: #ffd700;
+  --background: var(--cyber-black);
+  --foreground: #e9f0f0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+}
+
+.cyber-bg {
+  background:
+    radial-gradient(1200px 800px at 50% -20%, rgba(0, 243, 255, 0.14), transparent 60%),
+    radial-gradient(900px 700px at 12% 20%, rgba(255, 215, 0, 0.08), transparent 55%),
+    radial-gradient(900px 700px at 88% 30%, rgba(255, 51, 51, 0.07), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 22%),
+    var(--cyber-black);
+  position: relative;
+}
+
+.cyber-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.04) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  opacity: 0.07;
+  mix-blend-mode: overlay;
+}
+
+.cyber-panel {
+  position: relative;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.58);
+  border: 1px solid rgba(0, 243, 255, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 18px 60px rgba(0, 0, 0, 0.65);
+  padding: 24px;
+  overflow: hidden;
+}
+
+.cyber-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.cyber-panel::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(500px 220px at 50% 0%, rgba(0, 243, 255, 0.16), transparent 65%);
+}
+
+.cyber-title {
+  font-family: ui-serif, STSong, "Songti SC", "SimSun", serif;
+  color: rgba(255, 255, 255, 0.94);
+  text-shadow:
+    0 0 22px rgba(0, 243, 255, 0.35),
+    0 0 48px rgba(0, 243, 255, 0.16);
+}
+
+.cyber-subtitle {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  color: rgba(0, 243, 255, 0.78);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.cyber-label {
+  font-family: ui-serif, STKaiti, KaiTi, Songti SC, serif;
+  color: rgba(255, 255, 255, 0.78);
+  letter-spacing: 0.18em;
+}
+
+.cyber-muted {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.cyber-input {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(0, 243, 255, 0.22);
+  border-radius: 14px;
+  padding: 12px 14px;
+  outline: none;
+  color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.cyber-input:focus {
+  border-color: rgba(0, 243, 255, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(0, 243, 255, 0.18) inset,
+    0 0 0 4px rgba(0, 243, 255, 0.12);
+}
+
+.cyber-error {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  color: rgba(255, 51, 51, 0.95);
+  border: 1px solid rgba(255, 51, 51, 0.3);
+  background: rgba(255, 51, 51, 0.06);
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+.cyber-stamp {
+  position: relative;
+  border-radius: 999px;
+  padding: 14px 18px;
+  font-family: ui-serif, STKaiti, KaiTi, Songti SC, serif;
+  letter-spacing: 0.35em;
+  color: rgba(0, 0, 0, 0.9);
+  background: linear-gradient(180deg, rgba(255, 215, 0, 0.92), rgba(255, 215, 0, 0.62));
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  transform: translateZ(0);
+  transition: transform 140ms ease, filter 140ms ease;
+}
+
+.cyber-stamp::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.25) inset,
+    0 0 0 2px rgba(255, 215, 0, 0.18);
+  opacity: 0.75;
+}
+
+.cyber-stamp:active {
+  transform: translateY(2px) scale(0.985);
+  filter: saturate(1.08);
+}
+
+.cyber-glow-ring {
+  box-shadow:
+    0 0 0 1px rgba(0, 243, 255, 0.22) inset,
+    0 0 22px rgba(0, 243, 255, 0.18),
+    0 0 60px rgba(0, 243, 255, 0.08);
+}
+
+.cyber-loading-line {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  letter-spacing: 0.22em;
+  color: rgba(255, 255, 255, 0.78);
+  text-transform: uppercase;
+}
+
+.cyber-code-stream {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  color: rgba(0, 243, 255, 0.5);
+  letter-spacing: 0.2em;
+  opacity: 0.9;
+  height: 2.2em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent, black 18%, black 82%, transparent);
+}
+
+.cyber-code-chunk {
+  display: block;
+  animation: cyber-code 1200ms linear infinite;
+}
+
+@keyframes cyber-code {
+  0% {
+    transform: translateY(0);
+    opacity: 0.1;
+  }
+  20% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateY(-160%);
+    opacity: 0.05;
+  }
+}
+
+.cyber-card {
+  border-radius: 18px;
+  border: 1px solid rgba(0, 243, 255, 0.16);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 18px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.cyber-verdict {
+  font-family: ui-serif, STKaiti, KaiTi, Songti SC, serif;
+  color: rgba(255, 255, 255, 0.94);
+  text-shadow:
+    0 0 24px rgba(0, 243, 255, 0.25),
+    0 0 60px rgba(0, 243, 255, 0.14);
+}
+
+.cyber-score {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  color: rgba(0, 243, 255, 0.92);
+}
+
+.cyber-score-bar {
+  background: linear-gradient(90deg, rgba(0, 243, 255, 0.88), rgba(255, 215, 0, 0.72));
+  box-shadow: 0 0 18px rgba(0, 243, 255, 0.18);
+}
+
+.cyber-poem {
+  font-family: ui-serif, STKaiti, KaiTi, Songti SC, serif;
+  color: rgba(255, 255, 255, 0.86);
+  letter-spacing: 0.08em;
+  line-height: 1.85;
+}
+
+.glitch {
+  position: relative;
+  animation: glitch-flicker 1.8s infinite linear;
+}
+
+.glitch::before,
+.glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.glitch::before {
+  transform: translate(2px, -1px);
+  color: rgba(0, 243, 255, 0.75);
+  mix-blend-mode: screen;
+  filter: blur(0.2px);
+}
+
+.glitch::after {
+  transform: translate(-2px, 1px);
+  color: rgba(255, 51, 51, 0.75);
+  mix-blend-mode: screen;
+  filter: blur(0.2px);
+}
+
+@keyframes glitch-flicker {
+  0% {
+    filter: none;
+    opacity: 1;
+  }
+  4% {
+    filter: contrast(1.1) saturate(1.1);
+    opacity: 0.92;
+  }
+  6% {
+    filter: contrast(1.4) saturate(1.2);
+    opacity: 1;
+  }
+  8% {
+    filter: none;
+  }
+  20% {
+    transform: skewX(-0.5deg);
+  }
+  21% {
+    transform: skewX(0deg);
+  }
+  48% {
+    opacity: 0.96;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    filter: none;
+    opacity: 1;
+  }
+}
