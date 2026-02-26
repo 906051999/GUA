@@ -27,6 +27,7 @@ import { MarkdownStream } from "@/components/MarkdownStream";
 import { DecodePromptPanel } from "@/components/DecodePromptPanel";
 import { AiConfigModal } from "@/components/AiConfigModal";
 import { UniverseModelLibraryPanel } from "@/components/UniverseModelLibraryPanel";
+import { UniverseModelViz } from "@/components/UniverseModelViz";
 import type { UniverseModelV1 } from "@/types/universeModel";
 import type { DivinationExtras, DivinationResult, DivinationTraceEvent } from "@/utils/divinationEngine";
 import { divineWithTrace } from "@/utils/divinationEngine";
@@ -91,6 +92,40 @@ type HistoryItemV1 = {
   feedback: HistoryFeedback;
 };
 
+type DecodeContextRefV1 =
+  | { k: "hid"; hid: string }
+  | { k: "snapshot"; snapshot: unknown };
+
+type DecodeAiHistoryItemV1 = {
+  v: 1;
+  id: string;
+  createdAt: number;
+  mode: DecodeMode;
+  directSource: DirectSource;
+  historyPickId: string | null;
+  options: { model: string | null; stream: boolean; thinking: boolean };
+  context: DecodeContextRefV1;
+  summary: {
+    question: string;
+    nickname: string;
+    datetimeISO: string;
+    score: number;
+    omega: string;
+    signature: string;
+  };
+  response: {
+    answer: string;
+    reasoning: string;
+    error: string | null;
+    aborted: boolean;
+    finishedAt: number | null;
+    durationMs: number | null;
+  };
+};
+
+type SettingsHelpTopic = "status" | "score" | "theta";
+type ModelVizMode = "mesh" | "flow" | "hud";
+
 function toDatetimeLocalValue(date: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -115,6 +150,7 @@ const ENHANCED_KEY = "gua.universeEnhanced.v1";
 const HISTORY_KEY = "gua.history.v1";
 const DECODE_PREFIX = "gua.decodePacket.v1:";
 const DECODE_OUTPUT_KEY = "gua.decodeOutput.v1";
+const DECODE_AI_HISTORY_KEY = "gua.decodeAiHistory.v1";
 
 function clamp01(n: number) {
   if (n < 0) return 0;
@@ -365,12 +401,27 @@ function normalizeMarkdownLatexEscapes(markdown: string) {
   );
 }
 
+function previewFromMarkdown(markdown: string) {
+  const raw = unwrapOuterMarkdownFence(markdown || "");
+  const lines = raw.split("\n").map((x) => x.trim());
+  const line = lines.find((x) => x && !x.startsWith("#") && !x.startsWith(">")) ?? "";
+  if (!line) return "";
+  return line.length > 120 ? `${line.slice(0, 120)}…` : line;
+}
+
 export default function CyberGuaApp() {
   const [runPhase, setRunPhase] = useState<Phase>("input");
   const [activeTab, setActiveTab] = useState<Phase>("input");
   const [isRunning, setIsRunning] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsHelpOpen, setSettingsHelpOpen] = useState(false);
+  const [settingsHelpTopic, setSettingsHelpTopic] = useState<SettingsHelpTopic>("status");
+  const [modelBoardOpen, setModelBoardOpen] = useState(false);
+  const [decodeHistoryOpen, setDecodeHistoryOpen] = useState(false);
+  const [decodeHistoryDetailId, setDecodeHistoryDetailId] = useState<string | null>(null);
+  const [divinationHistoryOpen, setDivinationHistoryOpen] = useState(false);
+  const [divinationHistoryDetailId, setDivinationHistoryDetailId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [nickname, setNickname] = useState("");
   const [model, setModel] = useState<UniverseModelV1 | null>(null);
@@ -383,6 +434,15 @@ export default function CyberGuaApp() {
     motion: "unknown",
   });
   const [history, setHistory] = useState<HistoryItemV1[]>([]);
+  const [decodeAiHistory, setDecodeAiHistory] = useState<DecodeAiHistoryItemV1[]>([]);
+  const [modelVizMode, setModelVizMode] = useState<ModelVizMode>(() => {
+    try {
+      const raw = localStorage.getItem("gua.modelVizMode.v1");
+      return raw === "mesh" || raw === "flow" || raw === "hud" ? raw : "mesh";
+    } catch {
+      return "mesh";
+    }
+  });
 
   const [datetimeValue, setDatetimeValue] = useState(() => toDatetimeLocalValue(new Date()));
   const datetime = useMemo(() => parseDatetimeLocalValue(datetimeValue), [datetimeValue]);
@@ -421,6 +481,9 @@ export default function CyberGuaApp() {
   const decodeRestoreOnceRef = useRef(false);
   const decodeAutoStartRef = useRef(false);
   const computeSpeedMulRef = useRef(1);
+  const decodeReasoningOpenRef = useRef(false);
+  const decodeReasoningManualRef = useRef(false);
+  const decodeAutoCollapseArmedRef = useRef(false);
 
   const runIdRef = useRef(0);
   const modelRef = useRef<UniverseModelV1 | null>(null);
@@ -430,6 +493,7 @@ export default function CyberGuaApp() {
   const enhancedWriteRef = useRef(0);
   const enhancedRef = useRef(enhanced);
   const historyRef = useRef<HistoryItemV1[]>([]);
+  const decodeAiHistoryRef = useRef<DecodeAiHistoryItemV1[]>([]);
 
   function setEnhancedPersist(next: EnhancedStateV1) {
     setEnhanced(next);
@@ -442,6 +506,12 @@ export default function CyberGuaApp() {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
   }
 
+  const setDecodeAiHistoryPersist = useCallback((next: DecodeAiHistoryItemV1[]) => {
+    setDecodeAiHistory(next);
+    decodeAiHistoryRef.current = next;
+    localStorage.setItem(DECODE_AI_HISTORY_KEY, JSON.stringify(next));
+  }, []);
+
   const entropyRef = useRef({
     seed: 0x12345678,
     lastT: 0,
@@ -449,6 +519,14 @@ export default function CyberGuaApp() {
     lastY: 0,
     has: false,
   });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("gua.modelVizMode.v1", modelVizMode);
+    } catch {
+      return;
+    }
+  }, [modelVizMode]);
 
   useEffect(() => {
     const normalizeModel = (loaded: UniverseModelV1) => {
@@ -528,6 +606,65 @@ export default function CyberGuaApp() {
       });
     }
 
+    const normalizeDecodeMode = (value: unknown): DecodeMode => {
+      return value === "result_current" || value === "model_current" || value === "result_history" || value === "llm_direct"
+        ? value
+        : "result_current";
+    };
+    const normalizeDirectSource = (value: unknown): DirectSource => {
+      return value === "current" || value === "last" || value === "history" ? value : "current";
+    };
+    const normalizeContext = (value: unknown): DecodeContextRefV1 => {
+      const v = value as { k?: unknown; hid?: unknown; snapshot?: unknown };
+      if (v && v.k === "hid" && typeof v.hid === "string") return { k: "hid", hid: v.hid };
+      if (v && v.k === "snapshot") return { k: "snapshot", snapshot: v.snapshot };
+      return { k: "snapshot", snapshot: null };
+    };
+    const normalizeDecodeAiHistory = (raw: DecodeAiHistoryItemV1) => {
+      const x = raw as unknown as Partial<DecodeAiHistoryItemV1>;
+      return {
+        v: 1,
+        id: typeof x.id === "string" ? x.id : `D${hex8(randU32())}`,
+        createdAt: Number.isFinite(x.createdAt) ? Number(x.createdAt) : Date.now(),
+        mode: normalizeDecodeMode(x.mode),
+        directSource: normalizeDirectSource(x.directSource),
+        historyPickId: typeof x.historyPickId === "string" || x.historyPickId === null ? x.historyPickId : null,
+        options: {
+          model: typeof x.options?.model === "string" || x.options?.model === null ? x.options.model : null,
+          stream: Boolean(x.options?.stream),
+          thinking: Boolean(x.options?.thinking),
+        },
+        context: normalizeContext(x.context),
+        summary: {
+          question: typeof x.summary?.question === "string" ? x.summary.question : "",
+          nickname: typeof x.summary?.nickname === "string" ? x.summary.nickname : "",
+          datetimeISO: typeof x.summary?.datetimeISO === "string" ? x.summary.datetimeISO : "",
+          score: Number.isFinite(Number(x.summary?.score)) ? Number(x.summary?.score) : 0,
+          omega: typeof x.summary?.omega === "string" ? x.summary.omega : "—",
+          signature: typeof x.summary?.signature === "string" ? x.summary.signature : "—",
+        },
+        response: {
+          answer: typeof x.response?.answer === "string" ? x.response.answer : "",
+          reasoning: typeof x.response?.reasoning === "string" ? x.response.reasoning : "",
+          error: typeof x.response?.error === "string" ? x.response.error : null,
+          aborted: Boolean(x.response?.aborted),
+          finishedAt: Number.isFinite(Number(x.response?.finishedAt)) ? Number(x.response?.finishedAt) : null,
+          durationMs: Number.isFinite(Number(x.response?.durationMs)) ? Number(x.response?.durationMs) : null,
+        },
+      } satisfies DecodeAiHistoryItemV1;
+    };
+
+    const loadedDecodeAiHistory = safeJsonParse<DecodeAiHistoryItemV1[]>(localStorage.getItem(DECODE_AI_HISTORY_KEY));
+    if (Array.isArray(loadedDecodeAiHistory)) {
+      const nextDecodeAiHistory = loadedDecodeAiHistory
+        .filter((x) => x && x.v === 1 && typeof x.id === "string")
+        .map((x) => normalizeDecodeAiHistory(x));
+      queueMicrotask(() => {
+        setDecodeAiHistory(nextDecodeAiHistory);
+        decodeAiHistoryRef.current = nextDecodeAiHistory;
+      });
+    }
+
     const onMove = (e: PointerEvent) => {
       const now = performance.now();
       const st = entropyRef.current;
@@ -565,6 +702,14 @@ export default function CyberGuaApp() {
   useEffect(() => {
     historyRef.current = history;
   }, [history]);
+
+  useEffect(() => {
+    decodeAiHistoryRef.current = decodeAiHistory;
+  }, [decodeAiHistory]);
+
+  useEffect(() => {
+    decodeReasoningOpenRef.current = decodeReasoningOpen;
+  }, [decodeReasoningOpen]);
 
   useEffect(() => {
     modelLibraryRef.current = modelLibrary;
@@ -1173,6 +1318,63 @@ export default function CyberGuaApp() {
   const shortcutHint = "Ctrl/⌘ + Enter";
   const dashboard = useMemo(() => computeDashboardMetrics(model, history, enhanced), [model, history, enhanced]);
 
+  const settingsHelpTitle = useMemo(() => {
+    if (settingsHelpTopic === "status") return "现状说明";
+    if (settingsHelpTopic === "score") return "评分说明";
+    return "维度说明";
+  }, [settingsHelpTopic]);
+
+  const settingsHelpMarkdown = useMemo(() => {
+    if (settingsHelpTopic === "status") {
+      return [
+        "## 个人宇宙常量 · 现状",
+        "",
+        "这块展示的是“当前本机模型”在本设备上的总体状态。",
+        "",
+        "- **推演次数（runCount）**：本机累计完成归一的次数。",
+        "- **演化进度**：`progress = clamp01(runCount / 120)`，越接近 120 越趋于收敛（只是进度条口径，不代表必然稳定）。",
+        "- **满意比例**：优先使用模型自身的 `likes` 计数；若 `likes.total` 为 0，则回退使用最近历史反馈统计。",
+        "- **签名**：最近一次推演的 `signature`（截断显示）；若无签名则显示模型 salt 的短码。",
+      ].join("\n");
+    }
+    if (settingsHelpTopic === "score") {
+      return [
+        "## 多维度评分",
+        "",
+        "这块是对“最近一段时间”推演结果的统计摘要，用于观察趋势，不是现实世界的吉凶承诺。",
+        "",
+        `- **统计窗口 N**：取最近 \`N = min(20, history.length)\` 条历史。`,
+        "- **Score 均值 / 波动**：对最近 N 条的 `score` 计算均值与标准差（波动越大代表近期不稳定/差异更大）。",
+        "- **Ω 有限率**：最近 N 条里 `omega` 不是 `\\infty` 的比例，用于粗略观察“可归一到有限值”的占比。",
+        "- **反馈倾向**：最近 N 条反馈的平均值（满意=+1，不满意=-1，未评价=0），范围约在 [-1,1]。",
+        "- **观测状态**：仅展示增强观测授权与状态（不会上传）。",
+      ].join("\n");
+    }
+    return [
+      "## 模型维度（θ16）",
+      "",
+      "θ16 是本机模型的 16 维权重向量（0..1），用于调制公式生成策略（算子/函数偏好、常数范围、shuffle 等）。",
+      "",
+      "### θ16 如何变化（训练/更新）",
+      "- 每次完成一次推演归一后，会提取本次推演的 16 维指纹 `fv16`。",
+      "- 使用指数滑动更新（EMA）：`theta[i] ← theta[i] + (fv16[i] - theta[i]) * eta`。",
+      "- `eta` 会随推演次数增大而降低：前期学得快，后期更稳。",
+      "- 点击“满意”也会触发一次更强的更新（eta 更大），加速向你认可的模式靠拢。",
+      "",
+      "### 为什么稳定度可能一直偏低",
+      "- **这里的稳定度不是“次数越多越高”的指标**。它是把 θ16 当作分布计算信息熵：",
+      "  - 先归一化：`p[i] = theta[i] / sum(theta)`",
+      "  - 熵：`H = -Σ p[i] log2 p[i]`，再归一化到 0..1",
+      "  - 稳定度：`stability = 1 - H_norm`",
+      "- 当 θ16 各维比较接近（分布更均匀）时，熵高，稳定度就低；这表示模型还没有形成“明显偏好”，不一定是算法错误。",
+      "- 如果你的问题类型跨度很大、或输入/观测变化把各维拉向不同方向互相抵消，θ16 会更接近均匀，从而稳定度长期偏低。",
+      "",
+      "### 这对你意味着什么",
+      "- 稳定度低：模型策略更“均衡/泛化”，输出结构多样。",
+      "- 稳定度高：模型策略更“偏置/收敛”，输出结构更固定。",
+    ].join("\n");
+  }, [settingsHelpTopic]);
+
   const phaseTerms = useMemo(() => {
     const terms = Array.from(new Set(trace.map((item) => item.phase).filter(Boolean)));
     return terms.length > 0 ? terms : ["易经", "融合", "归一"];
@@ -1537,10 +1739,54 @@ export default function CyberGuaApp() {
       return;
     }
 
+    decodeReasoningManualRef.current = false;
+    decodeAutoCollapseArmedRef.current = Boolean(decodeThinkingEnabled);
+
+    const createdAt = Date.now();
+    const perfStart = performance.now();
+    const exchangeId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `D${hex8(mix32(randU32(), createdAt >>> 0))}`;
+    const pkt = decodePacket as {
+      hid?: unknown;
+      input?: { question?: unknown; nickname?: unknown; datetimeISO?: unknown };
+      payload?: { input?: { question?: unknown; nickname?: unknown; datetimeISO?: unknown } };
+    };
+    const input = pkt?.input ?? pkt?.payload?.input ?? null;
+    const summaryQuestion = decodeSummary?.questionText ? decodeSummary.questionText : typeof input?.question === "string" ? input.question : "";
+    const summaryNickname = typeof input?.nickname === "string" ? input.nickname : "";
+    const summaryDatetimeISO = typeof input?.datetimeISO === "string" ? input.datetimeISO : "";
+    const context: DecodeContextRefV1 = typeof pkt?.hid === "string" ? { k: "hid", hid: pkt.hid } : { k: "snapshot", snapshot: decodePacket };
+    const historySeed: DecodeAiHistoryItemV1 = {
+      v: 1,
+      id: exchangeId,
+      createdAt,
+      mode: decodeMode,
+      directSource,
+      historyPickId: decodeHistoryPickId,
+      options: { model: decodeModel, stream: decodeStreamEnabled, thinking: decodeThinkingEnabled },
+      context,
+      summary: {
+        question: summaryQuestion,
+        nickname: summaryNickname,
+        datetimeISO: summaryDatetimeISO,
+        score: decodeSummary?.score ?? 0,
+        omega: decodeSummary?.omega ?? "—",
+        signature: decodeSummary?.sig ?? "—",
+      },
+      response: {
+        answer: "",
+        reasoning: "",
+        error: null,
+        aborted: false,
+        finishedAt: null,
+        durationMs: null,
+      },
+    };
+    setDecodeAiHistoryPersist([historySeed, ...decodeAiHistoryRef.current].slice(0, 80));
+
     setDecodeError(null);
     setDecodeAnswer("");
     setDecodeReasoning("");
-    setDecodeReasoningOpen(false);
+    setDecodeReasoningOpen(Boolean(decodeThinkingEnabled));
     try {
       sessionStorage.setItem(
         DECODE_OUTPUT_KEY,
@@ -1551,7 +1797,7 @@ export default function CyberGuaApp() {
           thinking: decodeThinkingEnabled,
           answer: "",
           reasoning: "",
-          reasoningOpen: false,
+          reasoningOpen: Boolean(decodeThinkingEnabled),
           auto: decodeAuto,
           directSource,
           historyPickId: decodeHistoryPickId,
@@ -1565,6 +1811,10 @@ export default function CyberGuaApp() {
     setDecodeStreaming(true);
     const ctrl = new AbortController();
     decodeAbortRef.current = ctrl;
+    let accAnswer = "";
+    let accReasoning = "";
+    let errorMessage: string | null = null;
+    let aborted = false;
     try {
       await streamDecode({
         mode: decodeMode,
@@ -1575,31 +1825,63 @@ export default function CyberGuaApp() {
           thinking: decodeThinkingEnabled,
         },
         signal: ctrl.signal,
-        onContent: (d) => pushDecodeChunk("c", d),
-        onReasoning: (d) => pushDecodeChunk("r", d),
+        onContent: (d) => {
+          accAnswer += d;
+          if (decodeAutoCollapseArmedRef.current && !decodeReasoningManualRef.current) {
+            decodeAutoCollapseArmedRef.current = false;
+            if (decodeReasoningOpenRef.current) setDecodeReasoningOpen(false);
+          }
+          pushDecodeChunk("c", d);
+        },
+        onReasoning: (d) => {
+          accReasoning += d;
+          pushDecodeChunk("r", d);
+        },
       });
       flushDecodePendingNow();
     } catch (e) {
-      if ((e as { name?: string }).name !== "AbortError") {
-        setDecodeError(e instanceof Error ? e.message : "解码失败。");
+      aborted = (e as { name?: string }).name === "AbortError";
+      if (!aborted) {
+        errorMessage = e instanceof Error ? e.message : "解码失败。";
+        setDecodeError(errorMessage);
       }
     } finally {
       flushDecodePendingNow();
+      const finishedAt = Date.now();
+      const durationMs = Math.round(Math.max(0, performance.now() - perfStart));
+      const next = decodeAiHistoryRef.current.map((x) => {
+        if (x.id !== exchangeId) return x;
+        return {
+          ...x,
+          response: {
+            answer: accAnswer,
+            reasoning: accReasoning,
+            error: errorMessage,
+            aborted,
+            finishedAt,
+            durationMs,
+          },
+        } satisfies DecodeAiHistoryItemV1;
+      });
+      setDecodeAiHistoryPersist(next);
       setDecodeStreaming(false);
       decodeAbortRef.current = null;
     }
   }, [
     decodeAuto,
+    decodeAiHistoryRef,
     decodeHistoryPickId,
     decodeMode,
     decodeModel,
     decodePacket,
     decodeStreamEnabled,
     decodeStreaming,
+    decodeSummary,
     decodeThinkingEnabled,
     directSource,
     flushDecodePendingNow,
     pushDecodeChunk,
+    setDecodeAiHistoryPersist,
   ]);
 
   useEffect(() => {
@@ -1658,79 +1940,119 @@ export default function CyberGuaApp() {
     return `> ${t.replace(/\n/g, "\n> ")}`;
   }, [decodeReasoning]);
 
+  const decodeHistoryDetail = useMemo(() => {
+    if (!decodeHistoryDetailId) return null;
+    return decodeAiHistory.find((x) => x.id === decodeHistoryDetailId) ?? null;
+  }, [decodeAiHistory, decodeHistoryDetailId]);
+
+  const decodeHistoryDetailContext = useMemo(() => {
+    if (!decodeHistoryDetail) return null;
+    if (decodeHistoryDetail.context.k === "hid") return loadPacketById(decodeHistoryDetail.context.hid);
+    return decodeHistoryDetail.context.snapshot;
+  }, [decodeHistoryDetail]);
+
+  const decodeHistoryDetailContextJson = useMemo(() => {
+    if (!decodeHistoryDetailContext) return "";
+    try {
+      return JSON.stringify(decodeHistoryDetailContext, null, 2);
+    } catch {
+      return "";
+    }
+  }, [decodeHistoryDetailContext]);
+
+  const decodeHistoryAnswerMarkdown = useMemo(() => {
+    if (!decodeHistoryDetail) return "";
+    return normalizeMarkdownLatexEscapes(unwrapOuterMarkdownFence(decodeHistoryDetail.response.answer || ""));
+  }, [decodeHistoryDetail]);
+
+  const decodeHistoryReasoningMarkdown = useMemo(() => {
+    if (!decodeHistoryDetail) return "";
+    const t = decodeHistoryDetail.response.reasoning || "";
+    if (!t.trim()) return "";
+    return `> ${t.replace(/\n/g, "\n> ")}`;
+  }, [decodeHistoryDetail]);
+
+  const divinationHistoryDetail = useMemo(() => {
+    if (!divinationHistoryDetailId) return null;
+    return history.find((x) => x.id === divinationHistoryDetailId) ?? null;
+  }, [divinationHistoryDetailId, history]);
+
+  const divinationHistoryDetailPacket = useMemo(() => {
+    if (!divinationHistoryDetail) return null;
+    return loadPacketById(divinationHistoryDetail.id);
+  }, [divinationHistoryDetail]);
+
+  const divinationHistoryDetailPacketJson = useMemo(() => {
+    if (!divinationHistoryDetailPacket) return "";
+    try {
+      return JSON.stringify(divinationHistoryDetailPacket, null, 2);
+    } catch {
+      return "";
+    }
+  }, [divinationHistoryDetailPacket]);
+
+  const divinationHistoryDetailFormulaMarkdown = useMemo(() => {
+    const p = divinationHistoryDetailPacket as { result?: { formulaLatex?: unknown } } | null;
+    const latex = p && typeof p.result?.formulaLatex === "string" ? p.result.formulaLatex : "";
+    if (!latex.trim()) return "";
+    return ["", "", "$$", latex, "$$"].join("\n");
+  }, [divinationHistoryDetailPacket]);
+
+  const divinationHistoryDetailTraceMarkdown = useMemo(() => {
+    const p = divinationHistoryDetailPacket as { trace?: unknown } | null;
+    const t = p?.trace;
+    return Array.isArray(t) ? buildScienceMarkdown(t as DivinationTraceEvent[]) : "";
+  }, [divinationHistoryDetailPacket]);
+
   return (
     <Box className="gua-bg" mih="100dvh">
-      <Container size="sm" py={64}>
+      <Container size="sm" py={64} style={{ flex: "1 0 auto" }}>
         <Stack gap={32}>
           <Stack gap={10} align="center" className="gua-hero">
-            <div className="gua-mark" aria-label="GUA">
-              <svg viewBox="0 0 180 48" role="img" aria-label="GUA" className="gua-mark-svg">
-                <path
-                  d="M38 12.8c-6.9 0-12.5 5.6-12.5 12.5S31.1 37.8 38 37.8c3.7 0 7.1-1.6 9.4-4.2v-8.4H37.2v-4.8H52.2v15.8c-3.6 4.3-8.9 7-14.2 7-9.6 0-17.5-7.9-17.5-17.5S28.4 7.8 38 7.8c5.1 0 9.9 2.2 13.3 5.8l-3.6 3.2c-2.4-2.6-5.8-4-9.7-4Z"
-                  fill="none"
-                  stroke="rgba(15, 23, 42, 0.92)"
-                  strokeWidth="3.2"
-                  strokeLinejoin="miter"
-                />
-                <path
-                  d="M73 9.8v20.9c0 4.5 3.1 7.5 7.9 7.5s7.9-3 7.9-7.5V9.8h5v21.3c0 7.3-5.2 12.1-12.9 12.1S68 38.4 68 31.1V9.8h5Z"
-                  fill="none"
-                  stroke="rgba(15, 23, 42, 0.92)"
-                  strokeWidth="3.2"
-                  strokeLinejoin="miter"
-                />
-                <path
-                  d="M126.6 9.8h5.7l13 33h-5.4l-3.2-8.3h-14.5l-3.2 8.3h-5.4l13-33Zm-2.7 20h10.9l-5.4-14.2-5.5 14.2Z"
-                  fill="none"
-                  stroke="rgba(15, 23, 42, 0.92)"
-                  strokeWidth="3.2"
-                  strokeLinejoin="miter"
-                />
-                <path
-                  d="M12 38.5h156"
-                  stroke="rgba(15, 23, 42, 0.28)"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                  strokeDasharray="2 6"
-                />
-              </svg>
-            </div>
-              <Group gap="xs" justify="center" align="center">
-                <Title order={1} className="gua-title" fw={600}>
-                  不确定性归一化装置
-                </Title>
-                <ActionIcon
-                  variant="subtle"
-                  color="gray"
-                  radius="xl"
-                  aria-label="算法说明"
-                  onClick={() => setAboutOpen(true)}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path
-                      d="M12 17v-5.2c0-1.1.9-2 2-2h.2c.9 0 1.8-.7 1.8-1.6 0-1.1-1.1-2-2.4-2h-3.2C8.6 6.2 7 7.7 7 9.5"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M12 20.3a.8.8 0 1 0 0-1.6.8.8 0 0 0 0 1.6Z"
-                      fill="currentColor"
-                    />
-                    <path
-                      d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </ActionIcon>
-              </Group>
+            <Group gap="xs" justify="center" align="center">
+              <Title order={1} className="gua-title" fw={600}>
+                不确定性归一化装置
+              </Title>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                radius="xl"
+                aria-label="算法说明"
+                onClick={() => setAboutOpen(true)}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 17v-5.2c0-1.1.9-2 2-2h.2c.9 0 1.8-.7 1.8-1.6 0-1.1-1.1-2-2.4-2h-3.2C8.6 6.2 7 7.7 7 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path d="M12 20.3a.8.8 0 1 0 0-1.6.8.8 0 0 0 0 1.6Z" fill="currentColor" />
+                  <path
+                    d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </ActionIcon>
+            </Group>
             <Text fz="sm" className="gua-subtitle">
               这不是算命，是推演你的宇宙常量：同一输入同一设备同一输出，推演可追踪，归一可复算。
             </Text>
+
+            <Box className="gua-viz-shell" style={{ width: "100%" }}>
+              <UniverseModelViz
+                model={model}
+                height={180}
+                className="gua-viz"
+                mode={modelVizMode}
+                onModeChange={setModelVizMode}
+                onClick={() => setModelBoardOpen(true)}
+              />
+            </Box>
           </Stack>
 
           <Stack gap={8} className="gua-phase">
@@ -1780,6 +2102,61 @@ export default function CyberGuaApp() {
                 <Text fw={700} fz="xs">
                   AI
                 </Text>
+              </ActionIcon>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                radius="xl"
+                aria-label="推演历史"
+                onClick={() => setDivinationHistoryOpen(true)}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 8v4.6l3 1.8"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </ActionIcon>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                radius="xl"
+                aria-label="解码历史"
+                onClick={() => setDecodeHistoryOpen(true)}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M8.2 8.6 5.4 12l2.8 3.4"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M15.8 8.6 18.6 12l-2.8 3.4"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M10.6 18.2 13.4 5.8"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               </ActionIcon>
               <ActionIcon
                 variant="subtle"
@@ -2083,11 +2460,13 @@ export default function CyberGuaApp() {
                       >
                         {decodeAuto ? "滚屏开" : "滚屏关"}
                       </Button>
-                      {decodeReasoning.trim() ? (
+                      {decodeThinkingEnabled || decodeReasoning.trim() ? (
                         <Button
                           radius="xl"
                           variant="default"
                           onClick={() => {
+                            decodeReasoningManualRef.current = true;
+                            decodeAutoCollapseArmedRef.current = false;
                             setDecodeReasoningOpen((v) => !v);
                             if (!decodeReasoningOpen && decodeAuto) queueMicrotask(() => scrollReasonToBottom());
                           }}
@@ -2106,7 +2485,7 @@ export default function CyberGuaApp() {
                     </Group>
                   </Group>
                 </Group>
-                {decodeReasoningOpen && decodeReasoningMarkdown ? (
+                {decodeReasoningOpen && (decodeReasoningMarkdown || (decodeStreaming && decodeThinkingEnabled)) ? (
                   <Box
                     ref={decodeReasonRef}
                     mt="sm"
@@ -2120,7 +2499,7 @@ export default function CyberGuaApp() {
                       if (decodeAuto && !isNearBottom(node, 48)) setDecodeAuto(false);
                     }}
                   >
-                    <MarkdownStream content={decodeReasoningMarkdown} className="gua-stream-body-inner" />
+                    <MarkdownStream content={decodeReasoningMarkdown || (decodeStreaming && decodeThinkingEnabled ? "思考中…" : "")} className="gua-stream-body-inner" />
                   </Box>
                 ) : null}
                 <Box
@@ -2142,11 +2521,66 @@ export default function CyberGuaApp() {
             </Stack>
           ) : null}
 
-          <Text ta="center" fz="xs" className="gua-footer">
-            本项目为个人宇宙常量推演装置，仅供体验与思辨。
-          </Text>
         </Stack>
       </Container>
+
+      <footer className="gua-footer-bar">
+        <div className="gua-footer-inner">
+          <a className="gua-footer-mark" href="https://github.com/MindMobius/GUA" target="_blank" rel="noreferrer">
+            <svg viewBox="0 0 180 48" role="img" aria-label="GUA" className="gua-footer-mark-svg">
+              <path
+                d="M38 12.8c-6.9 0-12.5 5.6-12.5 12.5S31.1 37.8 38 37.8c3.7 0 7.1-1.6 9.4-4.2v-8.4H37.2v-4.8H52.2v15.8c-3.6 4.3-8.9 7-14.2 7-9.6 0-17.5-7.9-17.5-17.5S28.4 7.8 38 7.8c5.1 0 9.9 2.2 13.3 5.8l-3.6 3.2c-2.4-2.6-5.8-4-9.7-4Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3.2"
+                strokeLinejoin="miter"
+              />
+              <path
+                d="M73 9.8v20.9c0 4.5 3.1 7.5 7.9 7.5s7.9-3 7.9-7.5V9.8h5v21.3c0 7.3-5.2 12.1-12.9 12.1S68 38.4 68 31.1V9.8h5Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3.2"
+                strokeLinejoin="miter"
+              />
+              <path
+                d="M126.6 9.8h5.7l13 33h-5.4l-3.2-8.3h-14.5l-3.2 8.3h-5.4l13-33Zm-2.7 20h10.9l-5.4-14.2-5.5 14.2Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3.2"
+                strokeLinejoin="miter"
+              />
+            </svg>
+          </a>
+          <a className="gua-footer-github" href="https://github.com/MindMobius/GUA" target="_blank" rel="noreferrer" aria-label="GitHub 仓库">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+              <path
+                d="M12 2c5.5 0 10 4.6 10 10.3 0 4.6-2.9 8.5-7 9.9-.5.1-.7-.2-.7-.5v-1.9c0-.7-.2-1.1-.5-1.4 2.2-.3 4.5-1.1 4.5-5.2 0-1.2-.4-2.2-1.1-3 .1-.3.5-1.4-.1-3-1-.3-3.1 1.2-3.1 1.2-.9-.3-1.9-.4-2.9-.4s-2 .1-2.9.4c0 0-2.1-1.5-3.1-1.2-.6 1.6-.2 2.7-.1 3-.7.8-1.1 1.8-1.1 3 0 4.1 2.3 4.9 4.5 5.2-.2.2-.4.5-.5.9-.4.2-1.5.6-2.2-.7-.4-.7-1.1-.8-1.1-.8-.7 0 0 .5 0 .5.5.2.8.9.8.9.4 1.3 2.4.9 2.4.9v1.4c0 .3-.2.6-.7.5-4.1-1.4-7-5.3-7-9.9C2 6.6 6.5 2 12 2Z"
+                fill="currentColor"
+              />
+            </svg>
+          </a>
+        </div>
+      </footer>
+
+      <Modal opened={modelBoardOpen} onClose={() => setModelBoardOpen(false)} size="xl" centered title="模型看板">
+        <Stack gap="md">
+          <Box className="gua-float-text">
+            <Text fz="xs" c="dimmed">
+              该视觉由本机模型参数确定性生成：导入同一模型到其他设备会呈现一致形态。
+            </Text>
+          </Box>
+          <Box className="gua-viz-shell" style={{ overflow: "hidden" }}>
+            <UniverseModelViz
+              model={model}
+              height={440}
+              className="gua-viz"
+              mode={modelVizMode}
+              onModeChange={setModelVizMode}
+              showControls
+            />
+          </Box>
+        </Stack>
+      </Modal>
 
       <Modal opened={aboutOpen} onClose={() => setAboutOpen(false)} size="lg" centered title="算法说明">
         <MarkdownStream
@@ -2195,9 +2629,39 @@ export default function CyberGuaApp() {
         <Stack gap="md">
           <Paper radius="md" p="md" className="gua-panel">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <Text fw={600} className="gua-section-title">
-                个人宇宙常量 · 现状
-              </Text>
+              <Group gap="xs" align="center" wrap="nowrap">
+                <Text fw={600} className="gua-section-title">
+                  个人宇宙常量 · 现状
+                </Text>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  radius="xl"
+                  aria-label="现状说明"
+                  onClick={() => {
+                    setSettingsHelpTopic("status");
+                    setSettingsHelpOpen(true);
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M12 17v-5.2c0-1.1.9-2 2-2h.2c.9 0 1.8-.7 1.8-1.6 0-1.1-1.1-2-2.4-2h-3.2C8.6 6.2 7 7.7 7 9.5"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path d="M12 20.3a.8.8 0 1 0 0-1.6.8.8 0 0 0 0 1.6Z" fill="currentColor" />
+                    <path
+                      d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </ActionIcon>
+              </Group>
               <Badge variant="light" color="gray" radius="md" className="gua-chip">
                 {dashboard.runCount}
               </Badge>
@@ -2228,9 +2692,39 @@ export default function CyberGuaApp() {
 
           <Paper radius="md" p="md" className="gua-panel">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <Text fw={600} className="gua-section-title">
-                多维度评分
-              </Text>
+              <Group gap="xs" align="center" wrap="nowrap">
+                <Text fw={600} className="gua-section-title">
+                  多维度评分
+                </Text>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  radius="xl"
+                  aria-label="评分说明"
+                  onClick={() => {
+                    setSettingsHelpTopic("score");
+                    setSettingsHelpOpen(true);
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M12 17v-5.2c0-1.1.9-2 2-2h.2c.9 0 1.8-.7 1.8-1.6 0-1.1-1.1-2-2.4-2h-3.2C8.6 6.2 7 7.7 7 9.5"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path d="M12 20.3a.8.8 0 1 0 0-1.6.8.8 0 0 0 0 1.6Z" fill="currentColor" />
+                    <path
+                      d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </ActionIcon>
+              </Group>
               <Badge variant="light" color="gray" radius="md" className="gua-chip">
                 N={Math.min(20, history.length)}
               </Badge>
@@ -2259,9 +2753,39 @@ export default function CyberGuaApp() {
 
           <Paper radius="md" p="md" className="gua-panel">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <Text fw={600} className="gua-section-title">
-                模型维度（θ16）
-              </Text>
+              <Group gap="xs" align="center" wrap="nowrap">
+                <Text fw={600} className="gua-section-title">
+                  模型维度（θ16）
+                </Text>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  radius="xl"
+                  aria-label="维度说明"
+                  onClick={() => {
+                    setSettingsHelpTopic("theta");
+                    setSettingsHelpOpen(true);
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M12 17v-5.2c0-1.1.9-2 2-2h.2c.9 0 1.8-.7 1.8-1.6 0-1.1-1.1-2-2.4-2h-3.2C8.6 6.2 7 7.7 7 9.5"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path d="M12 20.3a.8.8 0 1 0 0-1.6.8.8 0 0 0 0 1.6Z" fill="currentColor" />
+                    <path
+                      d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </ActionIcon>
+              </Group>
               <Badge variant="light" color="gray" radius="md" className="gua-chip">
                 稳定度 {Math.round(dashboard.thetaStability01 * 100)}%
               </Badge>
@@ -2273,65 +2797,6 @@ export default function CyberGuaApp() {
                 </Box>
               ))}
             </SimpleGrid>
-          </Paper>
-
-          <Paper radius="md" p="md" className="gua-panel">
-            <Group justify="space-between" align="center" wrap="nowrap">
-              <Text fw={600} className="gua-section-title">
-                历史记录
-              </Text>
-              <Badge variant="light" color="gray" radius="md" className="gua-chip">
-                {history.length}
-              </Badge>
-            </Group>
-            <Box mt="sm" style={{ maxHeight: 360, overflow: "auto", paddingRight: 6 }}>
-              {history.length === 0 ? (
-                <Text fz="sm" c="dimmed">
-                  暂无历史记录。
-                </Text>
-              ) : (
-                <Stack gap="xs">
-                  {history.map((item) => (
-                    <Paper key={item.id} radius="md" p="sm" className="gua-panel gua-panel-muted">
-                      <Group justify="space-between" align="flex-start" wrap="nowrap">
-                        <Stack gap={2} style={{ minWidth: 0 }}>
-                          <Text fz="xs" c="dimmed">
-                            {new Date(item.datetimeISO || item.createdAt).toLocaleString()} {item.root ? `· ${String(item.root).slice(0, 8)}` : ""}
-                          </Text>
-                          <Text fw={600} fz="sm">
-                            {item.question || "（无输入）"}
-                          </Text>
-                          <Text fz="sm" c="dimmed" lineClamp={2}>
-                            {item.omega ? `Ω=${item.omega} · ` : ""}Score={item.score}{item.signature ? ` · ${item.signature.slice(0, 8)}` : ""}
-                          </Text>
-                        </Stack>
-                        <Group gap="xs" wrap="nowrap">
-                          <Button
-                            size="xs"
-                            radius="xl"
-                            variant={item.feedback === 1 ? "filled" : "default"}
-                            onClick={() => setHistoryFeedback(item.id, 1)}
-                          >
-                            满意
-                          </Button>
-                          <Button
-                            size="xs"
-                            radius="xl"
-                            variant={item.feedback === -1 ? "filled" : "default"}
-                            onClick={() => setHistoryFeedback(item.id, -1)}
-                          >
-                            不满意
-                          </Button>
-                          <Button size="xs" radius="xl" variant="default" onClick={() => deleteHistoryItem(item.id)}>
-                            删除
-                          </Button>
-                        </Group>
-                      </Group>
-                    </Paper>
-                  ))}
-                </Stack>
-              )}
-            </Box>
           </Paper>
 
           <UniverseModelLibraryPanel
@@ -2362,6 +2827,339 @@ export default function CyberGuaApp() {
             </Text>
           </Paper>
         </Stack>
+      </Modal>
+
+      <Modal opened={settingsHelpOpen} onClose={() => setSettingsHelpOpen(false)} size="lg" centered title={settingsHelpTitle}>
+        <Paper radius="md" p="md" className="gua-panel">
+          <MarkdownStream content={settingsHelpMarkdown} />
+        </Paper>
+      </Modal>
+
+      <Modal opened={divinationHistoryOpen} onClose={() => setDivinationHistoryOpen(false)} size="lg" centered title="推演历史">
+        <Stack gap="md">
+          <Paper radius="md" p="md" className="gua-panel">
+            <Group justify="space-between" align="center" wrap="nowrap">
+              <Text fw={600} className="gua-section-title">
+                归一结果记录
+              </Text>
+              <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                {history.length}
+              </Badge>
+            </Group>
+            <Text mt="xs" fz="xs" c="dimmed">
+              推演历史与反馈从设置移至此处展示。仅保存在本地。
+            </Text>
+          </Paper>
+
+          <Paper radius="md" p="md" className="gua-panel">
+            <Box mt="sm" style={{ maxHeight: 420, overflow: "auto", paddingRight: 6 }}>
+              {history.length === 0 ? (
+                <Text fz="sm" c="dimmed">
+                  暂无推演历史记录。
+                </Text>
+              ) : (
+                <Stack gap="xs">
+                  {history.map((item) => (
+                    <Paper
+                      key={item.id}
+                      radius="md"
+                      p="sm"
+                      className="gua-panel gua-panel-muted"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => setDivinationHistoryDetailId(item.id)}
+                    >
+                      <Group justify="space-between" align="flex-start" wrap="nowrap">
+                        <Stack gap={2} style={{ minWidth: 0 }}>
+                          <Text fz="xs" c="dimmed">
+                            {new Date(item.datetimeISO || item.createdAt).toLocaleString()} {item.root ? `· ${String(item.root).slice(0, 8)}` : ""}
+                          </Text>
+                          <Text fw={600} fz="sm">
+                            {item.question || "（无输入）"}
+                          </Text>
+                          <Text fz="sm" c="dimmed" lineClamp={2}>
+                            {item.omega ? `Ω=${item.omega} · ` : ""}Score={item.score}
+                            {item.signature ? ` · ${item.signature.slice(0, 12)}` : ""}
+                          </Text>
+                        </Stack>
+                        <Group gap="xs" wrap="nowrap">
+                          <Button
+                            size="xs"
+                            radius="xl"
+                            variant={item.feedback === 1 ? "filled" : "default"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setHistoryFeedback(item.id, 1);
+                            }}
+                          >
+                            满意
+                          </Button>
+                          <Button
+                            size="xs"
+                            radius="xl"
+                            variant={item.feedback === -1 ? "filled" : "default"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setHistoryFeedback(item.id, -1);
+                            }}
+                          >
+                            不满意
+                          </Button>
+                          <Button
+                            size="xs"
+                            radius="xl"
+                            variant="default"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteHistoryItem(item.id);
+                              if (divinationHistoryDetailId === item.id) setDivinationHistoryDetailId(null);
+                            }}
+                          >
+                            删除
+                          </Button>
+                        </Group>
+                      </Group>
+                    </Paper>
+                  ))}
+                </Stack>
+              )}
+            </Box>
+          </Paper>
+        </Stack>
+      </Modal>
+
+      <Modal opened={Boolean(divinationHistoryDetail)} onClose={() => setDivinationHistoryDetailId(null)} size="xl" centered title="推演详情">
+        {divinationHistoryDetail ? (
+          <Stack gap="md">
+            <Paper radius="md" p="md" className="gua-panel">
+              <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+                <Stack gap={2} style={{ minWidth: 240, flex: "1 1 240px" }}>
+                  <Text fw={600} fz="sm">
+                    {divinationHistoryDetail.question || "（无输入）"}
+                  </Text>
+                  <Text fz="xs" c="dimmed" lineClamp={2}>
+                    {new Date(divinationHistoryDetail.datetimeISO || divinationHistoryDetail.createdAt).toLocaleString()}
+                    {divinationHistoryDetail.root ? ` · ${String(divinationHistoryDetail.root).slice(0, 8)}` : ""}
+                    {divinationHistoryDetail.signature ? ` · ${divinationHistoryDetail.signature.slice(0, 12)}` : ""}
+                  </Text>
+                </Stack>
+                <Group gap="xs" wrap="nowrap">
+                  <Button
+                    size="xs"
+                    radius="xl"
+                    variant={divinationHistoryDetail.feedback === 1 ? "filled" : "default"}
+                    onClick={() => setHistoryFeedback(divinationHistoryDetail.id, 1)}
+                  >
+                    满意
+                  </Button>
+                  <Button
+                    size="xs"
+                    radius="xl"
+                    variant={divinationHistoryDetail.feedback === -1 ? "filled" : "default"}
+                    onClick={() => setHistoryFeedback(divinationHistoryDetail.id, -1)}
+                  >
+                    不满意
+                  </Button>
+                  <Button
+                    size="xs"
+                    radius="xl"
+                    variant="default"
+                    onClick={() => {
+                      deleteHistoryItem(divinationHistoryDetail.id);
+                      setDivinationHistoryDetailId(null);
+                    }}
+                  >
+                    删除
+                  </Button>
+                </Group>
+              </Group>
+            </Paper>
+
+            <Paper radius="md" p="md" className="gua-panel">
+              <Group justify="space-between" align="center" wrap="nowrap">
+                <Text fw={600} fz="sm">
+                  归一公式
+                </Text>
+                <Group gap="xs" wrap="nowrap">
+                  <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                    Score={divinationHistoryDetail.score}
+                  </Badge>
+                  <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                    {divinationHistoryDetail.omega ? `Ω=${divinationHistoryDetail.omega}` : "Ω=—"}
+                  </Badge>
+                </Group>
+              </Group>
+              <Box mt="sm" className="gua-stream-body gua-decode-body">
+                <MarkdownStream content={divinationHistoryDetailFormulaMarkdown || "—"} className="gua-stream-body-inner" />
+              </Box>
+            </Paper>
+
+            {divinationHistoryDetailTraceMarkdown ? (
+              <Paper radius="md" p="md" className="gua-panel">
+                <Text fw={600} fz="sm">
+                  推演过程（现代块）
+                </Text>
+                <Box mt="sm" className="gua-stream-body gua-scroll-body">
+                  <MarkdownStream content={divinationHistoryDetailTraceMarkdown} className="gua-stream-body-inner" />
+                </Box>
+              </Paper>
+            ) : null}
+
+            <Paper radius="md" p="md" className="gua-panel">
+              <Text fw={600} fz="sm">
+                原始数据
+              </Text>
+              <Box mt="sm" style={{ maxHeight: 320, overflow: "auto", paddingRight: 6 }}>
+                <Text component="pre" fz="xs" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
+                  {divinationHistoryDetailPacketJson || "—"}
+                </Text>
+              </Box>
+            </Paper>
+          </Stack>
+        ) : null}
+      </Modal>
+
+      <Modal opened={decodeHistoryOpen} onClose={() => setDecodeHistoryOpen(false)} size="lg" centered title="解码历史">
+        <Stack gap="md">
+          <Paper radius="md" p="md" className="gua-panel">
+            <Group justify="space-between" align="center" wrap="nowrap">
+              <Text fw={600} className="gua-section-title">
+                请求与响应
+              </Text>
+              <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                {decodeAiHistory.length}
+              </Badge>
+            </Group>
+            <Text mt="xs" fz="xs" c="dimmed">
+              记录每次点击「开始解码」触发的 AI 解码请求与输出。仅保存在本地。
+            </Text>
+          </Paper>
+
+          <Paper radius="md" p="md" className="gua-panel">
+            <Box mt="sm" style={{ maxHeight: 420, overflow: "auto", paddingRight: 6 }}>
+              {decodeAiHistory.length === 0 ? (
+                <Text fz="sm" c="dimmed">
+                  暂无解码历史记录。
+                </Text>
+              ) : (
+                <Stack gap="xs">
+                  {decodeAiHistory.map((item) => {
+                    const modeLabel =
+                      item.mode === "result_current"
+                        ? "当前结果"
+                        : item.mode === "model_current"
+                          ? "模型"
+                          : item.mode === "result_history"
+                            ? "历史结果"
+                            : "直推演";
+                    const preview =
+                      previewFromMarkdown(item.response.answer) ||
+                      (item.response.error ? `错误：${item.response.error}` : item.response.aborted ? "已取消" : "—");
+                    return (
+                      <Paper
+                        key={item.id}
+                        radius="md"
+                        p="sm"
+                        className="gua-panel gua-panel-muted"
+                        style={{ cursor: "pointer" }}
+                        onClick={() => setDecodeHistoryDetailId(item.id)}
+                      >
+                        <Group justify="space-between" align="flex-start" wrap="nowrap">
+                          <Stack gap={2} style={{ minWidth: 0 }}>
+                            <Text fz="xs" c="dimmed">
+                              {new Date(item.createdAt).toLocaleString()} · {modeLabel}
+                              {item.options.model ? ` · ${item.options.model}` : ""}
+                            </Text>
+                            <Text fw={600} fz="sm">
+                              {item.summary.question || "（无输入）"}
+                            </Text>
+                            <Text fz="sm" c="dimmed" lineClamp={2}>
+                              {preview}
+                            </Text>
+                          </Stack>
+                          <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                            {item.id.slice(0, 6)}
+                          </Badge>
+                        </Group>
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+              )}
+            </Box>
+          </Paper>
+        </Stack>
+      </Modal>
+
+      <Modal opened={Boolean(decodeHistoryDetail)} onClose={() => setDecodeHistoryDetailId(null)} size="xl" centered title="解码详情">
+        {decodeHistoryDetail ? (
+          <Stack gap="md">
+            <Paper radius="md" p="md" className="gua-panel">
+              <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+                <Stack gap={2} style={{ minWidth: 240, flex: "1 1 240px" }}>
+                  <Text fw={600} fz="sm">
+                    {decodeHistoryDetail.summary.question || "（无输入）"}
+                  </Text>
+                  <Text fz="xs" c="dimmed" lineClamp={2}>
+                    {new Date(decodeHistoryDetail.createdAt).toLocaleString()}
+                    {decodeHistoryDetail.options.model ? ` · ${decodeHistoryDetail.options.model}` : ""}
+                    {decodeHistoryDetail.response.durationMs ? ` · ${decodeHistoryDetail.response.durationMs}ms` : ""}
+                    {decodeHistoryDetail.response.aborted ? " · 已取消" : ""}
+                  </Text>
+                </Stack>
+                <Group gap="xs" wrap="nowrap">
+                  <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                    Score={decodeHistoryDetail.summary.score}
+                  </Badge>
+                  <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                    {decodeHistoryDetail.summary.omega ? `Ω=${decodeHistoryDetail.summary.omega}` : "Ω=—"}
+                  </Badge>
+                </Group>
+              </Group>
+            </Paper>
+
+            {decodeHistoryDetail.response.error ? (
+              <Alert color="gray" variant="light" radius="md" className="gua-alert">
+                {decodeHistoryDetail.response.error}
+              </Alert>
+            ) : null}
+
+            <Paper radius="md" p="md" className="gua-panel">
+              <Text fw={600} fz="sm">
+                AI 回答
+              </Text>
+              <Box mt="sm" className="gua-stream-body gua-decode-body">
+                <MarkdownStream content={decodeHistoryAnswerMarkdown || "—"} className="gua-stream-body-inner" />
+              </Box>
+            </Paper>
+
+            {decodeHistoryReasoningMarkdown ? (
+              <Paper radius="md" p="md" className="gua-panel">
+                <Text fw={600} fz="sm">
+                  思考过程
+                </Text>
+                <Box mt="sm" className="gua-stream-body gua-scroll-body gua-decode-reasoning">
+                  <MarkdownStream content={decodeHistoryReasoningMarkdown} className="gua-stream-body-inner" />
+                </Box>
+              </Paper>
+            ) : null}
+
+            <Paper radius="md" p="md" className="gua-panel">
+              <Group justify="space-between" align="center" wrap="nowrap">
+                <Text fw={600} fz="sm">
+                  请求上下文
+                </Text>
+                <Badge variant="light" color="gray" radius="md" className="gua-chip">
+                  {decodeHistoryDetail.context.k === "hid" ? `hid:${decodeHistoryDetail.context.hid.slice(0, 6)}` : "snapshot"}
+                </Badge>
+              </Group>
+              <Box mt="sm" style={{ maxHeight: 320, overflow: "auto", paddingRight: 6 }}>
+                <Text component="pre" fz="xs" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
+                  {decodeHistoryDetailContextJson || "—"}
+                </Text>
+              </Box>
+            </Paper>
+          </Stack>
+        ) : null}
       </Modal>
 
       <AiConfigModal
