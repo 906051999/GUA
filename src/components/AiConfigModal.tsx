@@ -3,7 +3,11 @@
 import { Button, Group, Modal, Select, Stack, Switch, Text } from "@mantine/core";
 
 export type LlmModelConfig = { id: string; thinking: boolean };
-export type LlmConfigResponse = { models: LlmModelConfig[]; defaults: { model: string; stream: boolean; thinking: boolean } };
+export type LlmConfigResponse = {
+  models: LlmModelConfig[];
+  defaults: { model: string; stream: boolean; thinking: boolean };
+  warnings?: string[];
+};
 
 export function AiConfigModal(props: {
   opened: boolean;
@@ -20,6 +24,7 @@ export function AiConfigModal(props: {
   onResetDefaults: () => void;
 }) {
   const models = props.llmConfig?.models ?? [];
+  const warnings = props.llmConfig?.warnings ?? [];
 
   return (
     <Modal opened={props.opened} onClose={props.onClose} size="md" centered title="AI 配置">
@@ -50,6 +55,11 @@ export function AiConfigModal(props: {
             {props.llmConfigError}
           </Text>
         ) : null}
+        {warnings.length ? (
+          <Text fz="xs" c="dimmed">
+            {warnings.join(" ")}
+          </Text>
+        ) : null}
         <Group justify="space-between" align="center" wrap="wrap">
           <Button radius="xl" variant="default" onClick={props.onResetDefaults} disabled={!props.llmConfig}>
             恢复默认
@@ -62,4 +72,3 @@ export function AiConfigModal(props: {
     </Modal>
   );
 }
-

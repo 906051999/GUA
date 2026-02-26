@@ -59,6 +59,7 @@ type LlmModelConfig = {
 type LlmConfigResponse = {
   models: LlmModelConfig[];
   defaults: { model: string; stream: boolean; thinking: boolean };
+  warnings?: string[];
 };
 
 type EnhancedStateV1 = {
@@ -348,6 +349,20 @@ function downloadJson(filename: string, data: unknown) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function unwrapOuterMarkdownFence(markdown: string) {
+  const s = typeof markdown === "string" ? markdown.trim() : "";
+  const m = s.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/);
+  if (m && typeof m[1] === "string") return m[1];
+  return typeof markdown === "string" ? markdown : "";
+}
+
+function normalizeMarkdownLatexEscapes(markdown: string) {
+  return markdown.replace(
+    /\\\\(left|right|Omega|Phi|alpha|beta|gamma|epsilon|sigma|theta|pi|infty|lim|to|times|cdot|tanh|sin|cos|log|exp|frac|sqrt|hat)\b/g,
+    "\\$1",
+  );
 }
 
 export default function CyberGuaApp() {
@@ -1000,6 +1015,28 @@ export default function CyberGuaApp() {
     setIsRunning(false);
     setFeedbackLocked(false);
     setLastHistoryId(null);
+    decodeAbortRef.current?.abort();
+    decodeAbortRef.current = null;
+    if (decodePendingRef.current.raf) cancelAnimationFrame(decodePendingRef.current.raf);
+    decodePendingRef.current.raf = 0;
+    if (decodePendingRef.current.timer) clearTimeout(decodePendingRef.current.timer);
+    decodePendingRef.current.timer = 0;
+    decodePendingRef.current.a = "";
+    decodePendingRef.current.r = "";
+    setDecodePacket(null);
+    setDecodeError(null);
+    setDecodeStreaming(false);
+    setDecodeAnswer("");
+    setDecodeReasoning("");
+    setDecodeReasoningOpen(false);
+    setDecodeAuto(true);
+    setDirectSource("current");
+    setDecodeHistoryPickId(null);
+    try {
+      sessionStorage.removeItem(DECODE_OUTPUT_KEY);
+    } catch {
+      void 0;
+    }
   };
 
   const setHistoryFeedback = (id: string, feedback: HistoryFeedback) => {
@@ -1203,7 +1240,7 @@ export default function CyberGuaApp() {
 
   const llmLogic = useMemo(() => {
     return [
-      "一句话：输入极简，过程极繁，输出极决。",
+      "本文描述一种面向“个人宇宙常量”的确定性推演流程。系统以问题、时间与本地观测构造种子，生成可解释的符号参数集，并据此合成表达式结构；推演阶段分层揭示参数与结构，归一阶段将其数值化求解，输出标量Ω及其可复算的代入等式。推演次数越多，本机常量将缓慢收敛，形成专属法则。",
       "",
       "系统四步：输入→推演→归一→解码。",
       "",
@@ -1220,6 +1257,10 @@ export default function CyberGuaApp() {
       "- 对参数闭式进行解析并数值化得到 \\hat{Θ}。",
       "- 对表达式树递归求值，得到 Ω 数值（有限优先）。",
       "- 输出：Ω 等式、Ω 数值、Score（0-100）、可选签文 signature。",
+      "",
+      "解码原则：解答与启示必须服务于用户，必须落到“对你意味着什么”。问题解答给出问题趋势；模型启示用深读参数引导主观能动性。",
+      "趋势原则：趋势可正可负可中性可混合；禁止无证据地总是积极或总是消极。趋势不等于命运，主观能动性可改写路径。",
+      "输出格式：必须 Markdown；包含“## 问题解答”“## 模型启示”；两块各包含“### 结论（约100字）”小节，下一行写 80–140 字总结。",
       "",
       "边界：输出不承诺对应现实世界，只承诺对应“你的宇宙”。",
     ].join("\n");
@@ -1249,8 +1290,6 @@ export default function CyberGuaApp() {
   }
 
   useEffect(() => {
-    if (activeTab !== "decode") return;
-
     setLlmConfigError(null);
     if (!llmConfig) {
       void (async () => {
@@ -1270,6 +1309,10 @@ export default function CyberGuaApp() {
         }
       })();
     }
+  }, [llmConfig]);
+
+  useEffect(() => {
+    if (activeTab !== "decode") return;
 
     if (decodeMode === "result_current") {
       if (!lastHistoryId) {
@@ -1326,70 +1369,32 @@ export default function CyberGuaApp() {
 
     if (decodeMode === "llm_direct") {
       const m = modelRef.current;
-      if (directSource === "current") {
-        const q = question.trim();
-        if (!q) {
-          setDecodePacket(null);
-          setDecodeError("当前输入为空：请先填写问题文本，或切换到历史/最近一次作为数据来源。");
-          return;
-        }
-        const passive = collectPassiveObservables();
-        setDecodePacket({
-          logic: llmLogic,
-          payload: {
-            input: {
-              question: q,
-              nickname: nickname.trim() ? nickname.trim() : undefined,
-              datetimeISO: datetime.toISOString(),
-            },
-            obs: {
-              passive,
-              enhanced: enhancedRef.current,
-            },
-            model: m,
-            dashboard,
-            recentHistory: historyRef.current.slice(0, 20).map((x) => ({
-              id: x.id,
-              datetimeISO: x.datetimeISO,
-              question: x.question,
-              score: x.score,
-              omega: x.omega,
-              signature: x.signature,
-              feedback: x.feedback,
-            })),
+      const q = question.trim();
+      if (!q) {
+        setDecodePacket(null);
+        setDecodeError("当前输入为空：请先填写问题文本。");
+        return;
+      }
+      const passive = collectPassiveObservables();
+      setDecodePacket({
+        logic: llmLogic,
+        payload: {
+          input: {
+            question: q,
+            nickname: nickname.trim() ? nickname.trim() : undefined,
+            datetimeISO: datetime.toISOString(),
           },
-        });
-        return;
-      }
-      if (directSource === "last") {
-        if (!lastHistoryId) {
-          setDecodePacket(null);
-          setDecodeError("当前暂无归一结果：请先完成一次推演并归一，或切换到历史作为数据来源。");
-          return;
-        }
-        const packet = loadPacketById(lastHistoryId);
-        if (!packet) {
-          setDecodePacket(null);
-          setDecodeError("未找到对应推演记录。");
-          return;
-        }
-        setDecodePacket({ logic: llmLogic, payload: { packet, model: m, dashboard } });
-        return;
-      }
-      if (!decodeHistoryPickId) {
-        setDecodePacket(null);
-        return;
-      }
-      const packet = loadPacketById(decodeHistoryPickId);
-      if (!packet) {
-        setDecodePacket(null);
-        setDecodeError("未找到对应历史记录。");
-        return;
-      }
-      setDecodePacket({ logic: llmLogic, payload: { packet, model: m, dashboard } });
+          obs: {
+            passive,
+            enhanced: enhancedRef.current,
+          },
+          model: m,
+          dashboard,
+        },
+      });
       return;
     }
-  }, [activeTab, dashboard, datetime, decodeHistoryPickId, decodeMode, directSource, enhanced, lastHistoryId, llmConfig, llmLogic, nickname, question]);
+  }, [activeTab, dashboard, datetime, decodeHistoryPickId, decodeMode, directSource, enhanced, lastHistoryId, llmLogic, nickname, question]);
 
   useEffect(() => {
     try {
@@ -1601,11 +1606,16 @@ export default function CyberGuaApp() {
     if (!decodeAutoStartRef.current) return;
     if (activeTab !== "decode") return;
     if (decodeStreaming) return;
-    if (decodeMode !== "llm_direct" || directSource !== "current") return;
+    if (decodeMode !== "llm_direct") return;
     if (!decodePacket) return;
     decodeAutoStartRef.current = false;
     void onDecodeStart();
-  }, [activeTab, decodeMode, decodePacket, decodeStreaming, directSource, onDecodeStart]);
+  }, [activeTab, decodeMode, decodePacket, decodeStreaming, onDecodeStart]);
+
+  useEffect(() => {
+    if (decodeMode !== "llm_direct") return;
+    if (directSource !== "current") setDirectSource("current");
+  }, [decodeMode, directSource]);
 
   useEffect(() => {
     const node = decodeOutRef.current;
@@ -1636,6 +1646,11 @@ export default function CyberGuaApp() {
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
   }, [activeTab, decodeAuto, decodeReasoningOpen, flushDecodePendingNow, scrollDecodeToBottom, scrollReasonToBottom]);
+
+  const decodeAnswerMarkdown = useMemo(() => {
+    const t = decodeAnswer || "";
+    return normalizeMarkdownLatexEscapes(unwrapOuterMarkdownFence(t));
+  }, [decodeAnswer]);
 
   const decodeReasoningMarkdown = useMemo(() => {
     const t = decodeReasoning || "";
@@ -1761,38 +1776,6 @@ export default function CyberGuaApp() {
 
           <Group justify="space-between" align="center" className="gua-controls">
             <Group gap="xs">
-              <Button radius="xl" variant="default" onClick={onTerminate} disabled={!isRunning}>
-                终止
-              </Button>
-              <Button radius="xl" variant="default" onClick={onReset}>
-                重置
-              </Button>
-            </Group>
-            <Group gap="xs">
-              {activeTab === "input" ? (
-                <Button
-                  radius="xl"
-                  variant="default"
-                  disabled={!canStart}
-                  onClick={() => {
-                    const q = question.trim();
-                    if (!q) {
-                      setError("目标/问题不可为空。");
-                      return;
-                    }
-                    setError(null);
-                    decodeAutoStartRef.current = true;
-                    setDecodeMode("llm_direct");
-                    setDirectSource("current");
-                    setActiveTab("decode");
-                  }}
-                >
-                  AI推演
-                </Button>
-              ) : null}
-              <Button radius="xl" onClick={onStart} disabled={!canStart}>
-                {runPhase === "input" && trace.length === 0 && !result ? "开始推演" : "再推演一次"}
-              </Button>
               <ActionIcon variant="subtle" color="gray" radius="xl" aria-label="AI 配置" onClick={() => setAiConfigOpen(true)}>
                 <Text fw={700} fz="xs">
                   AI
@@ -1822,6 +1805,38 @@ export default function CyberGuaApp() {
                   />
                 </svg>
               </ActionIcon>
+              <Button radius="xl" variant="default" onClick={onReset}>
+                重置
+              </Button>
+              <Button radius="xl" variant="default" onClick={onTerminate} disabled={!isRunning}>
+                终止
+              </Button>
+            </Group>
+            <Group gap="xs">
+              {activeTab === "input" ? (
+                <Button
+                  radius="xl"
+                  variant="default"
+                  disabled={!canStart}
+                  onClick={() => {
+                    const q = question.trim();
+                    if (!q) {
+                      setError("目标/问题不可为空。");
+                      return;
+                    }
+                    setError(null);
+                    decodeAutoStartRef.current = true;
+                    setDecodeMode("llm_direct");
+                    setDirectSource("current");
+                    setActiveTab("decode");
+                  }}
+                >
+                  AI推演
+                </Button>
+              ) : null}
+              <Button radius="xl" onClick={onStart} disabled={!canStart}>
+                {runPhase === "input" && trace.length === 0 && !result ? "开始推演" : "再推演一次"}
+              </Button>
             </Group>
           </Group>
 
@@ -2053,38 +2068,42 @@ export default function CyberGuaApp() {
                     解码输出
                   </Text>
                   <Group gap="xs" wrap="wrap" style={{ justifyContent: "flex-end", flex: "1 1 360px" }}>
-                    <Button
-                      radius="xl"
-                      variant={decodeAuto ? "filled" : "default"}
-                      onClick={() => {
-                        if (decodeAuto) {
-                          setDecodeAuto(false);
-                          return;
-                        }
-                        setDecodeAuto(true);
-                        scrollDecodeToBottom();
-                      }}
-                    >
-                      {decodeAuto ? "滚屏开" : "滚屏关"}
-                    </Button>
-                    {decodeReasoning.trim() ? (
+                    <Group gap="xs" wrap="wrap">
                       <Button
                         radius="xl"
-                        variant="default"
+                        variant={decodeAuto ? "filled" : "default"}
                         onClick={() => {
-                          setDecodeReasoningOpen((v) => !v);
-                          if (!decodeReasoningOpen && decodeAuto) queueMicrotask(() => scrollReasonToBottom());
+                          if (decodeAuto) {
+                            setDecodeAuto(false);
+                            return;
+                          }
+                          setDecodeAuto(true);
+                          scrollDecodeToBottom();
                         }}
                       >
-                        {decodeReasoningOpen ? "收起思考" : "查看思考"}
+                        {decodeAuto ? "滚屏开" : "滚屏关"}
                       </Button>
-                    ) : null}
-                    <Button radius="xl" variant="default" onClick={onDecodeStop} disabled={!decodeStreaming}>
-                      停止
-                    </Button>
-                    <Button radius="xl" onClick={onDecodeStart} disabled={!decodePacket || decodeStreaming}>
-                      {decodeStreaming ? "解码中…" : "开始解码"}
-                    </Button>
+                      {decodeReasoning.trim() ? (
+                        <Button
+                          radius="xl"
+                          variant="default"
+                          onClick={() => {
+                            setDecodeReasoningOpen((v) => !v);
+                            if (!decodeReasoningOpen && decodeAuto) queueMicrotask(() => scrollReasonToBottom());
+                          }}
+                        >
+                          {decodeReasoningOpen ? "收起思考" : "查看思考"}
+                        </Button>
+                      ) : null}
+                    </Group>
+                    <Group gap="xs" wrap="wrap">
+                      <Button radius="xl" variant="default" onClick={onDecodeStop} disabled={!decodeStreaming}>
+                        停止
+                      </Button>
+                      <Button radius="xl" onClick={onDecodeStart} disabled={!decodePacket || decodeStreaming}>
+                        {decodeStreaming ? "解码中…" : "开始解码"}
+                      </Button>
+                    </Group>
                   </Group>
                 </Group>
                 {decodeReasoningOpen && decodeReasoningMarkdown ? (
@@ -2117,14 +2136,14 @@ export default function CyberGuaApp() {
                     if (decodeAuto && !isNearBottom(node, 48)) setDecodeAuto(false);
                   }}
                 >
-                  <MarkdownStream content={decodeAnswer || (decodeStreaming ? "正在解码…" : "")} className="gua-stream-body-inner" />
+                  <MarkdownStream content={decodeAnswerMarkdown || (decodeStreaming ? "正在解码…" : "")} className="gua-stream-body-inner" />
                 </Box>
               </Paper>
             </Stack>
           ) : null}
 
           <Text ta="center" fz="xs" className="gua-footer">
-            本项目为个人宇宙常量推演装置，仅供体验与思辨。输出不对应现实世界因果。
+            本项目为个人宇宙常量推演装置，仅供体验与思辨。
           </Text>
         </Stack>
       </Container>

@@ -30,8 +30,7 @@ export function DecodePromptPanel(props: {
   onBack: () => void;
   summaryText: string;
 }) {
-  const showHistoryPicker =
-    props.decodeMode === "result_history" || (props.decodeMode === "llm_direct" && props.directSource === "history");
+  const showHistoryPicker = props.decodeMode === "result_history";
 
   return (
     <Stack gap="md">
@@ -63,25 +62,6 @@ export function DecodePromptPanel(props: {
           ]}
         />
       </Paper>
-
-      {props.decodeMode === "llm_direct" ? (
-        <Paper radius="md" p="md" className="gua-panel">
-          <Text fw={600} fz="sm">
-            数据来源
-          </Text>
-          <SegmentedControl
-            mt="sm"
-            fullWidth
-            value={props.directSource}
-            onChange={(v) => props.setDirectSource(v as DirectSource)}
-            data={[
-              { value: "current", label: "当前输入" },
-              { value: "last", label: "最近一次" },
-              { value: "history", label: "历史选择" },
-            ]}
-          />
-        </Paper>
-      ) : null}
 
       {showHistoryPicker ? (
         <Paper radius="md" p="md" className="gua-panel">
