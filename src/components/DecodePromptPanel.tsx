@@ -19,6 +19,13 @@ export type HistoryItemV1 = {
   feedback: -1 | 0 | 1;
 };
 
+function formatIsoMinute(value: string | number) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const iso = d.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`;
+}
+
 export function DecodePromptPanel(props: {
   decodeMode: DecodeMode;
   setDecodeMode: (mode: DecodeMode) => void;
@@ -85,7 +92,7 @@ export function DecodePromptPanel(props: {
                     <Group justify="space-between" align="flex-start" wrap="nowrap">
                       <Stack gap={2} style={{ minWidth: 0 }}>
                         <Text fz="xs" c="dimmed">
-                          {new Date(item.datetimeISO || item.createdAt).toLocaleString()} {item.root ? `· ${String(item.root).slice(0, 8)}` : ""}
+                          {formatIsoMinute(item.datetimeISO || item.createdAt)} {item.root ? `· ${String(item.root).slice(0, 8)}` : ""}
                         </Text>
                         <Text fw={600} fz="sm">
                           {item.question || "（无输入）"}

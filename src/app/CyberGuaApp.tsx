@@ -133,7 +133,7 @@ function toDatetimeLocalValue(date: Date) {
 
 function parseDatetimeLocalValue(value: string) {
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return new Date();
+  if (Number.isNaN(d.getTime())) return new Date(0);
   return d;
 }
 
@@ -156,6 +156,19 @@ function clamp01(n: number) {
   if (n < 0) return 0;
   if (n > 1) return 1;
   return n;
+}
+
+function clamp11(n: number) {
+  if (n < -1) return -1;
+  if (n > 1) return 1;
+  return n;
+}
+
+function meanStd(values: number[]) {
+  if (values.length <= 0) return { mean: 0, std: 0 };
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const std = Math.sqrt(values.reduce((acc, x) => acc + (x - mean) * (x - mean), 0) / values.length);
+  return { mean, std };
 }
 
 function hex8(n: number) {
@@ -193,11 +206,25 @@ function normalizeLite(s: string) {
   return s.trim().replace(/\s+/g, " ");
 }
 
+function formatIsoMinute(value: string | number) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const iso = d.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`;
+}
+
 function computeHistoryPrior16(history: HistoryItemV1[]) {
   const acc = Array.from({ length: 16 }, () => 0);
   let sumW = 0;
   for (const item of history) {
-    const w = item.feedback === 1 ? 1 : item.feedback === 0 ? 0.35 : 0.12;
+    const score01 = clamp01(Number(item.score ?? 0) / 100);
+    const omegaFinite =
+      typeof item.omega === "string" && item.omega.length > 0 && !item.omega.includes("\\infty") && !item.omega.includes("∞");
+    const quality01 = clamp01(0.15 + score01 * 0.65 + (omegaFinite ? 0.2 : 0));
+    let w = 0.08 + quality01 * 0.92;
+    if (item.feedback === 1) w *= 1.25;
+    if (item.feedback === -1) w *= 0.55;
+    w = Math.max(0.02, Math.min(1.5, w));
     if (!item.features16 || item.features16.length !== 16) continue;
     sumW += w;
     for (let i = 0; i < 16; i += 1) acc[i] = (acc[i] ?? 0) + clamp01(Number(item.features16[i])) * w;
@@ -435,16 +462,9 @@ export default function CyberGuaApp() {
   });
   const [history, setHistory] = useState<HistoryItemV1[]>([]);
   const [decodeAiHistory, setDecodeAiHistory] = useState<DecodeAiHistoryItemV1[]>([]);
-  const [modelVizMode, setModelVizMode] = useState<ModelVizMode>(() => {
-    try {
-      const raw = localStorage.getItem("gua.modelVizMode.v1");
-      return raw === "mesh" || raw === "flow" || raw === "hud" ? raw : "mesh";
-    } catch {
-      return "mesh";
-    }
-  });
+  const [modelVizMode, setModelVizMode] = useState<ModelVizMode>("mesh");
 
-  const [datetimeValue, setDatetimeValue] = useState(() => toDatetimeLocalValue(new Date()));
+  const [datetimeValue, setDatetimeValue] = useState("");
   const datetime = useMemo(() => parseDatetimeLocalValue(datetimeValue), [datetimeValue]);
 
   const [result, setResult] = useState<DivinationResult | null>(null);
@@ -521,12 +541,19 @@ export default function CyberGuaApp() {
   });
 
   useEffect(() => {
+    if (datetimeValue) return;
+    setDatetimeValue(toDatetimeLocalValue(new Date()));
+  }, [datetimeValue]);
+
+  useEffect(() => {
     try {
-      localStorage.setItem("gua.modelVizMode.v1", modelVizMode);
+      const raw = localStorage.getItem("gua.modelVizMode.v1");
+      const mode = raw === "mesh" || raw === "flow" || raw === "hud" ? raw : "mesh";
+      setModelVizMode(mode);
     } catch {
       return;
     }
-  }, [modelVizMode]);
+  }, []);
 
   useEffect(() => {
     const normalizeModel = (loaded: UniverseModelV1) => {
@@ -1058,25 +1085,12 @@ export default function CyberGuaApp() {
       const fv16 = [...fp8, ...obsFp8.map((x) => clamp01(Number(x)))].slice(0, 16);
       lastRunRef.current = { fv16, entropy, obsHash };
 
-      const nextRunCount = Math.max(0, currentModel.runCount) + 1;
-      const settle = clamp01(nextRunCount / 120);
-      const eta = Math.max(0.008, Math.min(0.042, 0.04 - settle * 0.022));
-      const theta16 = currentModel.theta16.map((v, i) => clamp01(v + (fv16[i]! - v) * eta));
-      const likedRatio = currentModel.likes.total ? currentModel.likes.liked / currentModel.likes.total : 0;
-      const policy = defaultPolicyFromTheta(theta16, nextRunCount, likedRatio);
-      const nextModel: UniverseModelV1 = {
-        ...currentModel,
-        runCount: nextRunCount,
-        theta16,
-        policy,
-        updatedAt: Date.now(),
-      };
-      persistActiveModel(nextModel);
-
       const phases = Array.from(new Set(steps.map((x) => x.phase).filter(Boolean)));
       const formulaDataFinal = buildFormulaData(fSeed, phases, currentModel.policy);
       const formulaLatex = formulaDataFinal.latex;
-      const omega = formulaDataFinal.params.find((p) => p.key === "Ω")?.value;
+      const omegaParam = formulaDataFinal.params.find((p) => p.key === "Ω")?.value;
+      const omegaText = typeof omegaParam === "string" ? omegaParam : omegaParam != null ? String(omegaParam) : undefined;
+      const omegaFinite = typeof omegaText === "string" && omegaText.length > 0 && !omegaText.includes("\\infty") && !omegaText.includes("∞");
       const root = steps[0]?.rootDigest ?? steps.find((x) => x.rootDigest)?.rootDigest;
       const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `H${hex8(mix32(entropy, Date.now() >>> 0))}`;
       const record: HistoryItemV1 = {
@@ -1092,10 +1106,47 @@ export default function CyberGuaApp() {
         signature: res.signature,
         root: root ? String(root) : undefined,
         formulaLatex,
-        omega: omega ? String(omega) : undefined,
+        omega: omegaText,
         features16: fv16,
         feedback: 0,
       };
+
+      const prevScores = historyRef.current
+        .slice(0, 20)
+        .map((x) => (Number.isFinite(x.score) ? Number(x.score) : 0))
+        .filter((n) => Number.isFinite(n));
+      const prevStd = meanStd(prevScores).std;
+      const nextStd = meanStd([res.score, ...prevScores].slice(0, 20)).std;
+      const stabilityDelta = clamp11((prevStd - nextStd) / 12);
+      const scoreNorm = clamp11(clamp01(res.score / 100) * 2 - 1);
+      const omegaSign = omegaFinite ? 1 : -1;
+      const reward = clamp11(scoreNorm * 0.65 + omegaSign * 0.2 + stabilityDelta * 0.15);
+
+      const nextRunCount = Math.max(0, currentModel.runCount) + 1;
+      const settle = clamp01(nextRunCount / 120);
+      const etaBase = Math.max(0.008, Math.min(0.042, 0.04 - settle * 0.022));
+      const gain = reward >= 0 ? clamp01(0.2 + 0.8 * reward) : 0.12;
+      const dir = reward >= 0 ? 1 : -0.06;
+      let theta16 = currentModel.theta16.map((v, i) => clamp01(v + (fv16[i]! - v) * etaBase * gain * dir));
+
+      if (nextRunCount % 20 === 0) {
+        const prior16 = computeHistoryPrior16([record, ...historyRef.current]);
+        if (prior16) {
+          const influence = Math.max(0.05, 0.14 - settle * 0.08);
+          theta16 = theta16.map((v, i) => clamp01(v * (1 - influence) + (prior16[i] ?? 0.5) * influence));
+        }
+      }
+
+      const likedRatio = currentModel.likes.total ? currentModel.likes.liked / currentModel.likes.total : 0;
+      const policy = defaultPolicyFromTheta(theta16, nextRunCount, likedRatio);
+      const nextModel: UniverseModelV1 = {
+        ...currentModel,
+        runCount: nextRunCount,
+        theta16,
+        policy,
+        updatedAt: Date.now(),
+      };
+      persistActiveModel(nextModel);
       localStorage.setItem(
         `${DECODE_PREFIX}${id}`,
         JSON.stringify({
@@ -1110,7 +1161,7 @@ export default function CyberGuaApp() {
           result: {
             score: res.score,
             signature: res.signature,
-            omega: omega ? String(omega) : undefined,
+            omega: omegaText,
             formulaLatex,
           },
           carry: res.carry,
@@ -1334,6 +1385,7 @@ export default function CyberGuaApp() {
         "- **推演次数（runCount）**：本机累计完成归一的次数。",
         "- **演化进度**：`progress = clamp01(runCount / 120)`，越接近 120 越趋于收敛（只是进度条口径，不代表必然稳定）。",
         "- **满意比例**：优先使用模型自身的 `likes` 计数；若 `likes.total` 为 0，则回退使用最近历史反馈统计。",
+        "- **自演进策略**：无反馈也会按“结果质量”自动微调 θ16；反馈仅作加速/抑制。",
         "- **签名**：最近一次推演的 `signature`（截断显示）；若无签名则显示模型 salt 的短码。",
       ].join("\n");
     }
@@ -1347,6 +1399,7 @@ export default function CyberGuaApp() {
         "- **Score 均值 / 波动**：对最近 N 条的 `score` 计算均值与标准差（波动越大代表近期不稳定/差异更大）。",
         "- **Ω 有限率**：最近 N 条里 `omega` 不是 `\\infty` 的比例，用于粗略观察“可归一到有限值”的占比。",
         "- **反馈倾向**：最近 N 条反馈的平均值（满意=+1，不满意=-1，未评价=0），范围约在 [-1,1]。",
+        "- **与自演进的关系**：Score / Ω 有限会参与本机模型的自动更新权重。",
         "- **观测状态**：仅展示增强观测授权与状态（不会上传）。",
       ].join("\n");
     }
@@ -1357,9 +1410,10 @@ export default function CyberGuaApp() {
       "",
       "### θ16 如何变化（训练/更新）",
       "- 每次完成一次推演归一后，会提取本次推演的 16 维指纹 `fv16`。",
-      "- 使用指数滑动更新（EMA）：`theta[i] ← theta[i] + (fv16[i] - theta[i]) * eta`。",
+      "- 使用奖励加权的指数滑动更新（EMA）：结果质量更高时学得更快，质量更差时会更谨慎。",
       "- `eta` 会随推演次数增大而降低：前期学得快，后期更稳。",
-      "- 点击“满意”也会触发一次更强的更新（eta 更大），加速向你认可的模式靠拢。",
+      "- 点击“满意”仍会触发一次更强的更新（eta 更大），加速向你认可的模式靠拢（催化剂）。",
+      "- 每 20 次推演会做一次轻量历史整合，把近期高质量模式融合回 θ16，减少在线噪声追随。",
       "",
       "### 为什么稳定度可能一直偏低",
       "- **这里的稳定度不是“次数越多越高”的指标**。它是把 θ16 当作分布计算信息熵：",
@@ -2871,7 +2925,7 @@ export default function CyberGuaApp() {
                       <Group justify="space-between" align="flex-start" wrap="nowrap">
                         <Stack gap={2} style={{ minWidth: 0 }}>
                           <Text fz="xs" c="dimmed">
-                            {new Date(item.datetimeISO || item.createdAt).toLocaleString()} {item.root ? `· ${String(item.root).slice(0, 8)}` : ""}
+                                {formatIsoMinute(item.datetimeISO || item.createdAt)} {item.root ? `· ${String(item.root).slice(0, 8)}` : ""}
                           </Text>
                           <Text fw={600} fz="sm">
                             {item.question || "（无输入）"}
@@ -2937,7 +2991,7 @@ export default function CyberGuaApp() {
                     {divinationHistoryDetail.question || "（无输入）"}
                   </Text>
                   <Text fz="xs" c="dimmed" lineClamp={2}>
-                    {new Date(divinationHistoryDetail.datetimeISO || divinationHistoryDetail.createdAt).toLocaleString()}
+                    {formatIsoMinute(divinationHistoryDetail.datetimeISO || divinationHistoryDetail.createdAt)}
                     {divinationHistoryDetail.root ? ` · ${String(divinationHistoryDetail.root).slice(0, 8)}` : ""}
                     {divinationHistoryDetail.signature ? ` · ${divinationHistoryDetail.signature.slice(0, 12)}` : ""}
                   </Text>
@@ -3066,7 +3120,7 @@ export default function CyberGuaApp() {
                         <Group justify="space-between" align="flex-start" wrap="nowrap">
                           <Stack gap={2} style={{ minWidth: 0 }}>
                             <Text fz="xs" c="dimmed">
-                              {new Date(item.createdAt).toLocaleString()} · {modeLabel}
+                              {formatIsoMinute(item.createdAt)} · {modeLabel}
                               {item.options.model ? ` · ${item.options.model}` : ""}
                             </Text>
                             <Text fw={600} fz="sm">
@@ -3100,7 +3154,7 @@ export default function CyberGuaApp() {
                     {decodeHistoryDetail.summary.question || "（无输入）"}
                   </Text>
                   <Text fz="xs" c="dimmed" lineClamp={2}>
-                    {new Date(decodeHistoryDetail.createdAt).toLocaleString()}
+                    {formatIsoMinute(decodeHistoryDetail.createdAt)}
                     {decodeHistoryDetail.options.model ? ` · ${decodeHistoryDetail.options.model}` : ""}
                     {decodeHistoryDetail.response.durationMs ? ` · ${decodeHistoryDetail.response.durationMs}ms` : ""}
                     {decodeHistoryDetail.response.aborted ? " · 已取消" : ""}

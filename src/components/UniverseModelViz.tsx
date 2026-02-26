@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Group } from "@mantine/core";
 import type { UniverseModelV1 } from "@/types/universeModel";
 import { UniverseModelBoard } from "@/components/UniverseModelBoard";
@@ -20,10 +20,6 @@ type UniverseModelVizProps = {
 
 const DEFAULT_KEY = "gua.modelVizMode.v1";
 
-function normalizeMode(value: unknown): UniverseModelVizMode {
-  return value === "mesh" || value === "flow" || value === "hud" ? value : "mesh";
-}
-
 export function UniverseModelViz({
   model,
   height = 180,
@@ -34,26 +30,16 @@ export function UniverseModelViz({
   mode,
   onModeChange,
 }: UniverseModelVizProps) {
-  const [uncontrolledMode, setUncontrolledMode] = useState<UniverseModelVizMode>(() => {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      return raw ? normalizeMode(raw) : "mesh";
-    } catch {
-      return "mesh";
-    }
-  });
+  const [uncontrolledMode, setUncontrolledMode] = useState<UniverseModelVizMode>("mesh");
 
   const activeMode = mode ?? uncontrolledMode;
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, activeMode);
-    } catch {
-      return;
-    }
-  }, [activeMode, storageKey]);
-
   const setModePersist = (next: UniverseModelVizMode) => {
+    try {
+      localStorage.setItem(storageKey, next);
+    } catch {
+      void 0;
+    }
     if (onModeChange) onModeChange(next);
     else setUncontrolledMode(next);
   };

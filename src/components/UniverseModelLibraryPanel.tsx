@@ -5,6 +5,13 @@ import { useMemo, useState } from "react";
 import type { UniverseModelV1 } from "@/types/universeModel";
 import type { UniverseModelLibraryV1 } from "@/utils/universeModelLibrary";
 
+function formatIsoMinute(value: number) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const iso = d.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`;
+}
+
 export function UniverseModelLibraryPanel(props: {
   library: UniverseModelLibraryV1 | null;
   activeModel: UniverseModelV1 | null;
@@ -104,7 +111,7 @@ export function UniverseModelLibraryPanel(props: {
                         ) : null}
                       </Group>
                       <Text fz="xs" c="dimmed" lineClamp={1}>
-                        {new Date(item.updatedAt || item.createdAt).toLocaleString()} · salt={String(item.model?.salt ?? "—")} · runCount=
+                        {formatIsoMinute(item.updatedAt || item.createdAt)} · salt={String(item.model?.salt ?? "—")} · runCount=
                         {String(item.model?.runCount ?? "—")}
                       </Text>
                       {isEditing ? (
