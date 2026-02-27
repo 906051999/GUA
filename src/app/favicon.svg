@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fbfaf7" />
+      <stop offset="100%" stop-color="#f3f1ed" />
+    </linearGradient>
+    <pattern id="grid" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M8 0H0V8" fill="none" stroke="rgba(27, 31, 36, 0.08)" stroke-width="1" />
+    </pattern>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.96)" />
+      <stop offset="100%" stop-color="rgba(246,245,242,0.76)" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)" />
+  <rect width="64" height="64" rx="14" fill="url(#grid)" opacity="0.28" />
+
+  <rect x="8" y="8" width="48" height="48" rx="14" fill="rgba(255,255,255,0.92)" stroke="rgba(27, 31, 36, 0.16)" />
+  <path d="M10 20H54" stroke="rgba(27, 31, 36, 0.06)" stroke-width="1" />
+  <rect x="14" y="14" width="36" height="36" rx="12" fill="url(#paper)" stroke="rgba(27, 31, 36, 0.12)" />
+
+  <text x="32" y="40" text-anchor="middle" fill="#1b1f24" font-size="26" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="800">
+    Ω
+  </text>
+  <circle cx="46" cy="46" r="3" fill="#ff7a3d" />
+</svg>

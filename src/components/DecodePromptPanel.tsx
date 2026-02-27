@@ -72,7 +72,7 @@ export function DecodePromptPanel(props: {
 
       {showHistoryPicker ? (
         <Paper radius="md" p="md" className="gua-panel">
-          <Group justify="space-between" align="center" wrap="nowrap">
+          <Group justify="space-between" align="center" wrap="wrap" gap="sm">
             <Text fw={600} fz="sm">
               选择历史记录
             </Text>

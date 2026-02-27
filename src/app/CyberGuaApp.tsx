@@ -499,6 +499,8 @@ export default function CyberGuaApp() {
   const decodeReasonProgrammatic = useRef(false);
   const decodePendingRef = useRef<{ a: string; r: string; raf: number; timer: number }>({ a: "", r: "", raf: 0, timer: 0 });
   const decodeRestoreOnceRef = useRef(false);
+  const decodePrefRestoredRef = useRef({ model: false, stream: false, thinking: false });
+  const decodePrefTouchedRef = useRef({ model: false, stream: false, thinking: false });
   const decodeAutoStartRef = useRef(false);
   const computeSpeedMulRef = useRef(1);
   const decodeReasoningOpenRef = useRef(false);
@@ -767,9 +769,18 @@ export default function CyberGuaApp() {
       }>(raw);
       if (saved) {
         if (saved.mode) setDecodeMode(saved.mode);
-        if (saved.model !== undefined) setDecodeModel(saved.model ?? null);
-        if (typeof saved.stream === "boolean") setDecodeStreamEnabled(saved.stream);
-        if (typeof saved.thinking === "boolean") setDecodeThinkingEnabled(saved.thinking);
+        if (saved.model !== undefined) {
+          decodePrefRestoredRef.current.model = true;
+          setDecodeModel(saved.model ?? null);
+        }
+        if (typeof saved.stream === "boolean") {
+          decodePrefRestoredRef.current.stream = true;
+          setDecodeStreamEnabled(saved.stream);
+        }
+        if (typeof saved.thinking === "boolean") {
+          decodePrefRestoredRef.current.thinking = true;
+          setDecodeThinkingEnabled(saved.thinking);
+        }
         if (typeof saved.auto === "boolean") setDecodeAuto(saved.auto);
         if (typeof saved.reasoningOpen === "boolean") setDecodeReasoningOpen(saved.reasoningOpen);
         if (saved.directSource) setDirectSource(saved.directSource);
@@ -785,6 +796,21 @@ export default function CyberGuaApp() {
     } catch {
       decodeRestoreOnceRef.current = true;
     }
+  }, []);
+
+  const setDecodeModelFromUser = useCallback((v: string | null) => {
+    decodePrefTouchedRef.current.model = true;
+    setDecodeModel(v);
+  }, []);
+
+  const setDecodeStreamEnabledFromUser = useCallback((v: boolean) => {
+    decodePrefTouchedRef.current.stream = true;
+    setDecodeStreamEnabled(v);
+  }, []);
+
+  const setDecodeThinkingEnabledFromUser = useCallback((v: boolean) => {
+    decodePrefTouchedRef.current.thinking = true;
+    setDecodeThinkingEnabled(v);
   }, []);
 
   useEffect(() => {
@@ -1557,9 +1583,18 @@ export default function CyberGuaApp() {
           }
           const cfg = (await res.json()) as LlmConfigResponse;
           setLlmConfig(cfg);
-          setDecodeModel((prev) => prev ?? cfg.defaults.model);
-          setDecodeStreamEnabled((prev) => (prev === true || prev === false ? prev : cfg.defaults.stream));
-          setDecodeThinkingEnabled((prev) => (prev === true || prev === false ? prev : cfg.defaults.thinking));
+          setDecodeModel((prev) => {
+            if (decodePrefRestoredRef.current.model || decodePrefTouchedRef.current.model) return prev;
+            return cfg.defaults.model;
+          });
+          setDecodeStreamEnabled((prev) => {
+            if (decodePrefRestoredRef.current.stream || decodePrefTouchedRef.current.stream) return prev;
+            return cfg.defaults.stream;
+          });
+          setDecodeThinkingEnabled((prev) => {
+            if (decodePrefRestoredRef.current.thinking || decodePrefTouchedRef.current.thinking) return prev;
+            return cfg.defaults.thinking;
+          });
         } catch (e) {
           setLlmConfigError(e instanceof Error ? e.message : "加载模型配置失败。");
         }
@@ -1693,7 +1728,6 @@ export default function CyberGuaApp() {
     const id = (decodeModel ?? "").trim();
     if (!id) {
       setDecodeThinkingSupported(false);
-      setDecodeThinkingEnabled(false);
       return;
     }
     const m = models.find((x) => x.id === id);
@@ -2060,8 +2094,8 @@ export default function CyberGuaApp() {
 
   return (
     <Box className="gua-bg" mih="100dvh">
-      <Container size="sm" py={64} style={{ flex: "1 0 auto" }}>
-        <Stack gap={32}>
+      <Container size="sm" py={64} className="gua-shell" style={{ flex: "1 0 auto" }}>
+        <Stack gap={32} className="gua-main-stack">
           <Stack gap={10} align="center" className="gua-hero">
             <Group gap="xs" justify="center" align="center">
               <Title order={1} className="gua-title" fw={600}>
@@ -2272,7 +2306,7 @@ export default function CyberGuaApp() {
           </Group>
 
           {activeTab === "input" ? (
-            <Paper radius="md" p="xl" className="gua-panel">
+            <Paper radius="md" p="xl" className="gua-panel gua-panel-input">
               <Stack gap="md">
                 <Group justify="space-between" align="center">
                   <Text fw={600} className="gua-section-title">
@@ -2335,7 +2369,7 @@ export default function CyberGuaApp() {
             trace.length > 0 || isRunning || formulaSeed !== null ? (
               <Stack gap="md">
                 <Paper radius="md" p="md" className="gua-panel">
-                  <Group justify="space-between" align="center" wrap="nowrap">
+                  <Group justify="space-between" align="center" wrap="wrap" gap="sm">
                     <Stack gap={2}>
                       <Text fw={600} fz="sm">
                         推演进行中
@@ -2344,7 +2378,7 @@ export default function CyberGuaApp() {
                         {trace.length > 0 ? `${Math.min(traceVisible, trace.length)}/${trace.length}` : "采样中"} · {progressPct}%
                       </Text>
                     </Stack>
-                    <Group gap="xs" wrap="nowrap">
+                    <Group gap="xs" wrap="wrap" style={{ justifyContent: "flex-end", flex: "1 1 260px" }}>
                       <Button
                         radius="xl"
                         variant="default"
@@ -2360,7 +2394,7 @@ export default function CyberGuaApp() {
                       >
                         加速 ×{computeSpeedMul}
                       </Button>
-                      <Box style={{ width: 160 }}>
+                      <Box style={{ width: "min(240px, 100%)", flex: "1 1 160px" }}>
                         <Progress value={progressPct} />
                       </Box>
                     </Group>
@@ -2400,7 +2434,7 @@ export default function CyberGuaApp() {
                   lunarMarkdown=""
                 />
                 <Paper radius="md" p="md" className="gua-panel">
-                  <Group justify="space-between" align="center" wrap="nowrap">
+                  <Group justify="space-between" align="center" wrap="wrap" gap="sm">
                     <Stack gap={2}>
                       <Text fw={600} fz="sm">
                         归一常量结果
@@ -2409,7 +2443,7 @@ export default function CyberGuaApp() {
                         Score={result.score}{result.signature ? ` · ${result.signature.slice(0, 8)}` : ""}
                       </Text>
                     </Stack>
-                    <Group gap="xs" wrap="nowrap">
+                    <Group gap="xs" wrap="wrap" style={{ justifyContent: "flex-end" }}>
                       <Button
                         radius="xl"
                         variant="default"
@@ -2428,7 +2462,7 @@ export default function CyberGuaApp() {
                   </Group>
                 </Paper>
                 <Paper radius="md" p="md" className="gua-panel">
-                  <Group justify="space-between" align="center" wrap="nowrap">
+                  <Group justify="space-between" align="center" wrap="wrap" gap="sm">
                     <Stack gap={2}>
                       <Text fw={600} fz="sm">
                         对于此次宇宙常量的推演，是否满意
@@ -2437,7 +2471,7 @@ export default function CyberGuaApp() {
                         满意会加速本机模型收敛；不满意只记录为负反馈，降低后续参考权重。
                       </Text>
                     </Stack>
-                    <Group gap="xs" wrap="nowrap">
+                    <Group gap="xs" wrap="wrap" style={{ justifyContent: "flex-end" }}>
                       <Button radius="xl" variant="default" onClick={onDislike} disabled={feedbackLocked}>
                         不满意
                       </Button>
@@ -3222,18 +3256,18 @@ export default function CyberGuaApp() {
         llmConfig={llmConfig}
         llmConfigError={llmConfigError}
         decodeModel={decodeModel}
-        setDecodeModel={setDecodeModel}
+        setDecodeModel={setDecodeModelFromUser}
         decodeStreamEnabled={decodeStreamEnabled}
-        setDecodeStreamEnabled={setDecodeStreamEnabled}
+        setDecodeStreamEnabled={setDecodeStreamEnabledFromUser}
         decodeThinkingEnabled={decodeThinkingEnabled}
-        setDecodeThinkingEnabled={setDecodeThinkingEnabled}
+        setDecodeThinkingEnabled={setDecodeThinkingEnabledFromUser}
         decodeThinkingSupported={decodeThinkingSupported}
         onResetDefaults={() => {
           const d = llmConfig?.defaults;
           if (!d) return;
-          setDecodeModel(d.model);
-          setDecodeStreamEnabled(d.stream);
-          setDecodeThinkingEnabled(d.thinking);
+          setDecodeModelFromUser(d.model);
+          setDecodeStreamEnabledFromUser(d.stream);
+          setDecodeThinkingEnabledFromUser(d.thinking);
         }}
       />
     </Box>

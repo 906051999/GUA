@@ -852,3 +852,65 @@ body {
 .mantine-Divider-root {
   border-color: var(--line);
 }
+
+@media (max-width: 640px) {
+  .gua-shell {
+    padding-top: 28px !important;
+    padding-bottom: 28px !important;
+  }
+
+  .gua-main-stack {
+    gap: 18px !important;
+  }
+
+  .gua-panel-input {
+    padding: 16px !important;
+  }
+
+  .gua-title {
+    font-size: 28px;
+    line-height: 1.15;
+  }
+
+  .gua-subtitle {
+    letter-spacing: 0.08em;
+    text-transform: none;
+  }
+
+  .gua-footer-bar {
+    padding: 14px 0 18px;
+  }
+
+  .gua-footer-inner {
+    width: calc(100% - 24px);
+  }
+
+  .gua-formula-modal {
+    padding: 10px;
+    max-height: 86vh;
+  }
+
+  .gua-formula-modal-inner {
+    min-width: 0;
+  }
+
+  .gua-param-head,
+  .gua-param-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .gua-param-head-cell:first-child,
+  .gua-param-meaning {
+    grid-column: 1 / -1;
+  }
+
+  .gua-param-math,
+  .gua-param-math-value {
+    justify-self: start;
+  }
+
+  .gua-param-math-value .markstream-react {
+    text-align: left;
+  }
+}

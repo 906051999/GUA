@@ -29,12 +29,27 @@ export const metadata: Metadata = {
     template: "%s · GUA",
   },
   description: siteDescription,
+  keywords: [
+    "GUA",
+    "不确定性归一化装置",
+    "个人宇宙常量",
+    "归一常量",
+    "可复算",
+    "可追溯",
+    "离线推演",
+    "本地模型",
+  ],
   applicationName: "GUA",
   referrer: "origin-when-cross-origin",
   formatDetection: {
     email: false,
     address: false,
     telephone: false,
+  },
+  other: {
+    "itemprop:name": siteTitle,
+    "itemprop:description": siteDescription,
+    "itemprop:image": "/opengraph-image",
   },
   alternates: {
     canonical: "/",
@@ -52,6 +67,7 @@ export const metadata: Metadata = {
         width: 1200,
         height: 630,
         alt: siteTitle,
+        type: "image/png",
       },
     ],
   },
@@ -63,15 +79,17 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon.svg", type: "image/svg+xml", sizes: "any" },
       { url: "/icon", type: "image/png" },
     ],
-    shortcut: "/favicon.ico",
+    shortcut: "/favicon.svg",
     apple: [{ url: "/apple-icon", type: "image/png" }],
   },
 };
 
 export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
   themeColor: "#0b0f17",
 };
 

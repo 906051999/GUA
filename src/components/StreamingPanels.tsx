@@ -155,7 +155,7 @@ export function StreamingPanels({
         </SimpleGrid>
       ) : null}
 
-      <Modal opened={formulaOpen} onClose={() => setFormulaOpen(false)} size="calc(100vw - 96px)" centered>
+      <Modal opened={formulaOpen} onClose={() => setFormulaOpen(false)} size="calc(100vw - 32px)" centered>
         <div className="gua-formula-modal">
           <div className="gua-formula-modal-inner">
             <MarkdownStream content={formulaMarkdown} className="gua-stream-body-inner gua-stream-formula" />
