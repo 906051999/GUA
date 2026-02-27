@@ -667,6 +667,11 @@ export default function CyberGuaApp() {
       queueMicrotask(() => {
         setHistory(nextHistory);
         historyRef.current = nextHistory;
+        const initialId = nextHistory[0]?.id ?? null;
+        if (initialId && !lastHistoryIdRef.current) {
+          lastHistoryIdRef.current = initialId;
+          setLastHistoryId(initialId);
+        }
       });
     }
 
@@ -1280,6 +1285,8 @@ export default function CyberGuaApp() {
     setIsRunning(false);
     setFeedbackLocked(false);
     setLastHistoryId(null);
+    lastHistoryIdRef.current = null;
+    lastRunRef.current = null;
     decodeAbortRef.current?.abort();
     decodeAbortRef.current = null;
     if (decodePendingRef.current.raf) cancelAnimationFrame(decodePendingRef.current.raf);
@@ -1312,8 +1319,9 @@ export default function CyberGuaApp() {
   const deleteHistoryItem = (id: string) => {
     const next = historyRef.current.filter((item) => item.id !== id);
     setHistoryPersist(next);
-    if (lastHistoryIdRef.current === id) lastHistoryIdRef.current = null;
-    if (lastHistoryId === id) setLastHistoryId(null);
+    const fallbackId = next[0]?.id ?? null;
+    if (lastHistoryIdRef.current === id) lastHistoryIdRef.current = fallbackId;
+    if (lastHistoryId === id) setLastHistoryId(fallbackId);
     localStorage.removeItem(`${DECODE_PREFIX}${id}`);
   };
 
@@ -1649,24 +1657,36 @@ export default function CyberGuaApp() {
     if (activeTab !== "decode") return;
 
     if (decodeMode === "result_current") {
-      if (!lastHistoryId) {
+      const currentId = lastHistoryId ?? historyRef.current[0]?.id ?? null;
+      if (!lastHistoryId && currentId) {
+        lastHistoryIdRef.current = currentId;
+        setLastHistoryId(currentId);
+      }
+      if (!currentId) {
         setDecodePacket(null);
         setDecodeError("当前暂无归一结果：请先完成一次推演并归一。");
         return;
       }
-      const packet = loadPacketById(lastHistoryId);
-      if (!packet) {
+      const tryIds = [currentId, ...historyRef.current.map((x) => x.id).filter((x) => x !== currentId)];
+      const found = tryIds.map((id) => ({ id, packet: loadPacketById(id) })).find((x) => x.packet);
+      if (!found) {
         setDecodePacket(null);
         setDecodeError("未找到对应推演记录：请先完成一次推演并归一。");
         return;
       }
-      setDecodePacket(packet);
+      if (found.id !== lastHistoryId) {
+        lastHistoryIdRef.current = found.id;
+        setLastHistoryId(found.id);
+      }
+      setDecodePacket(found.packet);
+      setDecodeError(null);
       return;
     }
 
     if (decodeMode === "result_history") {
       if (!decodeHistoryPickId) {
         setDecodePacket(null);
+        setDecodeError(null);
         return;
       }
       const packet = loadPacketById(decodeHistoryPickId);
@@ -1676,6 +1696,7 @@ export default function CyberGuaApp() {
         return;
       }
       setDecodePacket(packet);
+      setDecodeError(null);
       return;
     }
 
@@ -1698,6 +1719,7 @@ export default function CyberGuaApp() {
         enhanced,
         recent,
       });
+      setDecodeError(null);
       return;
     }
 
@@ -1726,6 +1748,7 @@ export default function CyberGuaApp() {
           dashboard,
         },
       });
+      setDecodeError(null);
       return;
     }
   }, [activeTab, dashboard, datetime, decodeHistoryPickId, decodeMode, directSource, enhanced, lastHistoryId, llmLogic, nickname, question]);
