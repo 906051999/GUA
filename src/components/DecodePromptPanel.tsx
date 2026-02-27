@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge, Box, Button, Group, Paper, SegmentedControl, Stack, Text } from "@mantine/core";
+import { Badge, Box, Button, Group, Paper, SegmentedControl, Stack, Text, type SegmentedControlItem } from "@mantine/core";
 
 export type DecodeMode = "result_current" | "model_current" | "result_history" | "llm_direct";
 export type DirectSource = "current" | "last" | "history";
@@ -18,6 +18,13 @@ export type HistoryItemV1 = {
   omega?: string;
   feedback: -1 | 0 | 1;
 };
+
+const DECODE_MODE_OPTIONS: SegmentedControlItem[] = [
+  { value: "result_current", label: "当前结果" },
+  { value: "model_current", label: "模型" },
+  { value: "result_history", label: "历史" },
+  { value: "llm_direct", label: "直推演" },
+];
 
 function formatIsoMinute(value: string | number) {
   const d = new Date(value);
@@ -61,12 +68,7 @@ export function DecodePromptPanel(props: {
           fullWidth
           value={props.decodeMode}
           onChange={(v) => props.setDecodeMode(v as DecodeMode)}
-          data={[
-            { value: "result_current", label: "当前结果" },
-            { value: "model_current", label: "模型" },
-            { value: "result_history", label: "历史" },
-            { value: "llm_direct", label: "直推演" },
-          ]}
+          data={DECODE_MODE_OPTIONS}
         />
       </Paper>
 

@@ -10,6 +10,7 @@ import {
   Container,
   Group,
   Progress,
+  SegmentedControl,
   Switch,
   Modal,
   Paper,
@@ -22,10 +23,13 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { Lunar } from "lunar-javascript";
+import QRCode from "qrcode";
+import html2canvas from "html2canvas";
 import { StreamingPanels } from "@/components/StreamingPanels";
 import { MarkdownStream } from "@/components/MarkdownStream";
 import { DecodePromptPanel } from "@/components/DecodePromptPanel";
 import { AiConfigModal } from "@/components/AiConfigModal";
+import { SharePoster } from "@/components/SharePoster";
 import { UniverseModelLibraryPanel } from "@/components/UniverseModelLibraryPanel";
 import { UniverseModelViz } from "@/components/UniverseModelViz";
 import type { UniverseModelV1 } from "@/types/universeModel";
@@ -33,6 +37,7 @@ import type { DivinationExtras, DivinationResult, DivinationTraceEvent } from "@
 import { divineWithTrace } from "@/utils/divinationEngine";
 import { streamDecode } from "@/utils/decodeLlmClient";
 import { buildFormulaData, type FormulaParam, type FormulaPolicy } from "@/utils/formulaEngine";
+import { copyPngToClipboard, downloadBlob, type ShareCardTemplate } from "@/utils/shareCard";
 import {
   addUniverseModelItem,
   deleteUniverseModelItem,
@@ -436,6 +441,28 @@ function previewFromMarkdown(markdown: string) {
   return line.length > 120 ? `${line.slice(0, 120)}…` : line;
 }
 
+function extractSectionConclusionFromMarkdown(markdown: string, sectionTitle: string) {
+  const raw = unwrapOuterMarkdownFence(markdown || "");
+  const lines = raw.split("\n");
+  const start = lines.findIndex((l) => l.trim() === `## ${sectionTitle}`);
+  const end =
+    start >= 0
+      ? lines.findIndex((l, i) => i > start && l.trim().startsWith("## "))
+      : -1;
+  const slice = start >= 0 ? lines.slice(start, end > start ? end : undefined) : lines;
+  const idx = slice.findIndex((l) => l.trim().startsWith("### 结论"));
+  if (idx >= 0) {
+    for (let i = idx + 1; i < Math.min(slice.length, idx + 10); i += 1) {
+      const t = slice[i]?.trim() ?? "";
+      if (!t) continue;
+      if (t.startsWith("#") || t.startsWith(">")) continue;
+      return t.length > 260 ? `${t.slice(0, 260)}…` : t;
+    }
+  }
+  const p = previewFromMarkdown(raw);
+  return p.length > 260 ? `${p.slice(0, 260)}…` : p;
+}
+
 export default function CyberGuaApp() {
   const [runPhase, setRunPhase] = useState<Phase>("input");
   const [activeTab, setActiveTab] = useState<Phase>("input");
@@ -491,6 +518,15 @@ export default function CyberGuaApp() {
   const [decodeThinkingEnabled, setDecodeThinkingEnabled] = useState(true);
   const [decodeThinkingSupported, setDecodeThinkingSupported] = useState(false);
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
+  const [shareCardBusy, setShareCardBusy] = useState(false);
+  const [shareCardError, setShareCardError] = useState<string | null>(null);
+  const [shareCardOpen, setShareCardOpen] = useState(false);
+  const [shareCardTemplate, setShareCardTemplate] = useState<ShareCardTemplate>("divination_decode");
+  const [shareCardPreviewUrl, setShareCardPreviewUrl] = useState<string | null>(null);
+  const [shareCardBlob, setShareCardBlob] = useState<Blob | null>(null);
+  const [sharePosterQrDataUrl, setSharePosterQrDataUrl] = useState<string>("");
+  const [shareCardBusyText, setShareCardBusyText] = useState<string>("");
+  const [shareCardBusyPct, setShareCardBusyPct] = useState<number>(0);
   const [computeSpeedMul, setComputeSpeedMul] = useState(1);
   const decodeAbortRef = useRef<AbortController | null>(null);
   const decodeOutRef = useRef<HTMLDivElement | null>(null);
@@ -506,6 +542,9 @@ export default function CyberGuaApp() {
   const decodeReasoningOpenRef = useRef(false);
   const decodeReasoningManualRef = useRef(false);
   const decodeAutoCollapseArmedRef = useRef(false);
+  const shareCardCacheRef = useRef(new Map<ShareCardTemplate, { key: string; blob: Blob; url: string }>());
+  const sharePosterRef = useRef<HTMLDivElement | null>(null);
+  const shareCardOpenedAtRef = useRef<string>(new Date().toISOString());
 
   const runIdRef = useRef(0);
   const modelRef = useRef<UniverseModelV1 | null>(null);
@@ -753,6 +792,14 @@ export default function CyberGuaApp() {
     decodeRestoreOnceRef.current = true;
     try {
       const raw = sessionStorage.getItem(DECODE_OUTPUT_KEY);
+      const normalizeDecodeMode = (value: unknown): DecodeMode => {
+        return value === "result_current" || value === "model_current" || value === "result_history" || value === "llm_direct"
+          ? value
+          : "result_current";
+      };
+      const normalizeDirectSource = (value: unknown): DirectSource => {
+        return value === "current" || value === "last" || value === "history" ? value : "current";
+      };
       const saved = safeJsonParse<{
         mode?: DecodeMode;
         model?: string | null;
@@ -768,7 +815,7 @@ export default function CyberGuaApp() {
         updatedAt?: number;
       }>(raw);
       if (saved) {
-        if (saved.mode) setDecodeMode(saved.mode);
+        if (saved.mode) setDecodeMode(normalizeDecodeMode(saved.mode));
         if (saved.model !== undefined) {
           decodePrefRestoredRef.current.model = true;
           setDecodeModel(saved.model ?? null);
@@ -783,7 +830,7 @@ export default function CyberGuaApp() {
         }
         if (typeof saved.auto === "boolean") setDecodeAuto(saved.auto);
         if (typeof saved.reasoningOpen === "boolean") setDecodeReasoningOpen(saved.reasoningOpen);
-        if (saved.directSource) setDirectSource(saved.directSource);
+        if (saved.directSource) setDirectSource(normalizeDirectSource(saved.directSource));
         if (saved.historyPickId !== undefined) setDecodeHistoryPickId(saved.historyPickId ?? null);
         if (typeof saved.answer === "string") setDecodeAnswer(saved.answer);
         if (typeof saved.reasoning === "string") setDecodeReasoning(saved.reasoning);
@@ -2033,6 +2080,310 @@ export default function CyberGuaApp() {
     return decodeAiHistory.find((x) => x.id === decodeHistoryDetailId) ?? null;
   }, [decodeAiHistory, decodeHistoryDetailId]);
 
+  const shareCardQrUrl = useMemo(() => {
+    const envUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim();
+    if (envUrl) return envUrl;
+    if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
+    return "http://localhost:3000";
+  }, []);
+
+  useEffect(() => {
+    if (!shareCardOpen) return;
+    void (async () => {
+      try {
+        const url = await QRCode.toDataURL(shareCardQrUrl, {
+          width: 256,
+          margin: 0,
+          errorCorrectionLevel: "M",
+          color: { dark: "#0b0f17", light: "#ffffff" },
+        });
+        setSharePosterQrDataUrl(url);
+      } catch {
+        setSharePosterQrDataUrl("");
+      }
+    })();
+  }, [shareCardOpen, shareCardQrUrl]);
+
+  useEffect(() => {
+    if (!shareCardBusy) {
+      setShareCardBusyText("");
+      setShareCardBusyPct(0);
+      return;
+    }
+    const steps = ["排版中…", "渲染中…", "合成 PNG…", "写入预览…"];
+    let i = 0;
+    setShareCardBusyText(steps[0] ?? "生成中…");
+    setShareCardBusyPct(12);
+    const id = window.setInterval(() => {
+      i += 1;
+      setShareCardBusyText(steps[i % steps.length] ?? "生成中…");
+      setShareCardBusyPct((v) => {
+        const next = v + 9 + Math.round(Math.random() * 10);
+        return Math.min(95, Math.max(v, next));
+      });
+    }, 650);
+    return () => window.clearInterval(id);
+  }, [shareCardBusy]);
+
+  const shareCardCopySupported =
+    typeof window !== "undefined" && typeof navigator?.clipboard?.write === "function" && typeof ClipboardItem !== "undefined";
+
+  const shareCardDefaultTemplate = useMemo<ShareCardTemplate>(() => {
+    if (decodeMode === "llm_direct") return "ai_direct";
+    if (decodeMode === "model_current") return "model_snapshot";
+    if (!decodePacket) return "model_snapshot";
+    return "divination_decode";
+  }, [decodeMode, decodePacket]);
+
+  useEffect(() => {
+    if (!shareCardOpen) return;
+    setShareCardTemplate(shareCardDefaultTemplate);
+  }, [shareCardDefaultTemplate, shareCardOpen]);
+
+  const shareCardProps = useMemo<{
+    template: ShareCardTemplate;
+    modeLabel: string;
+    localTimeText: string;
+    utcTimeText: string;
+    qrUrlText: string;
+    headline: string;
+    question?: string;
+    conclusionQa?: string;
+    conclusionInsight?: string;
+    score?: number;
+    omega?: string;
+    signature?: string;
+    rootDigest?: string;
+    formulaLatex?: string;
+    runCount?: number;
+    likedRatio?: number;
+    recent?: Array<{ question: string; score: number; omega?: string; signature?: string }>;
+    model?: UniverseModelV1 | null;
+    theta16?: number[];
+  }>(() => {
+    const pkt = decodePacket as
+      | {
+          hid?: unknown;
+          input?: { question?: unknown; datetimeISO?: unknown };
+          payload?: { input?: { question?: unknown; datetimeISO?: unknown } };
+          result?: { signature?: unknown; omega?: unknown; formulaLatex?: unknown };
+          recent?: Array<{ question?: unknown; score?: unknown; omega?: unknown; signature?: unknown }>;
+          model?: UniverseModelV1 | { runCount?: unknown; likes?: { total?: unknown; liked?: unknown } } | null;
+        }
+      | null;
+    const input = pkt?.input ?? pkt?.payload?.input ?? null;
+    const createdAtISO = typeof input?.datetimeISO === "string" ? input.datetimeISO : shareCardOpenedAtRef.current;
+    const createdAt = new Date(createdAtISO);
+    const safeDate = Number.isFinite(createdAt.getTime()) ? createdAt : new Date();
+    const localTimeText = (() => {
+      try {
+        const s = new Intl.DateTimeFormat("zh-CN", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+          timeZoneName: "short",
+        }).format(safeDate);
+        return `Local ${s}`;
+      } catch {
+        return `Local ${safeDate.toLocaleString()}`;
+      }
+    })();
+    const utcISO = safeDate.toISOString().replace(".000Z", "Z");
+    const utcTimeText = `UTC ${utcISO.replace("T", " ")}`;
+    const baseQuestion =
+      question.trim() ||
+      decodeSummary?.questionText ||
+      (typeof input?.question === "string" ? input.question : "") ||
+      (decodeMode === "llm_direct" && directSource === "current" ? question.trim() : "");
+
+    const sigFromPacket = typeof pkt?.result?.signature === "string" ? pkt.result.signature : "";
+    const omegaFromPacket = typeof pkt?.result?.omega === "string" ? pkt.result.omega : "";
+    const formulaFromPacket = typeof pkt?.result?.formulaLatex === "string" ? pkt.result.formulaLatex : "";
+    const signature = decodeSummary?.sig || sigFromPacket || "—";
+    const omegaRaw = decodeSummary?.omega || omegaFromPacket || "";
+    const omega = omegaRaw && omegaRaw !== "—" ? omegaRaw : "\\square";
+    const score = decodeSummary?.score ?? 0;
+
+    const rootDigest =
+      typeof pkt?.hid === "string" ? (history.find((x) => x.id === pkt.hid)?.root ?? "") : "";
+
+    const conclusionQa = extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "问题解答");
+    const conclusionInsight = extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "模型启示");
+
+    const qrUrlText = shareCardQrUrl.replace(/^https?:\/\//, "");
+    const modeLabel =
+      shareCardTemplate === "ai_direct" ? "AI 直推" : shareCardTemplate === "model_snapshot" ? "模型快照" : "推演解码";
+
+    if (shareCardTemplate === "ai_direct") {
+      return {
+        template: "ai_direct" as const,
+        modeLabel,
+        localTimeText,
+        utcTimeText,
+        qrUrlText,
+        headline: "一句问题，得到可晒的模型解码。",
+        question: baseQuestion,
+        conclusionQa,
+        conclusionInsight,
+        score,
+        omega,
+        signature,
+      };
+    }
+
+    if (shareCardTemplate === "model_snapshot") {
+      const m = (pkt?.model && typeof (pkt.model as { runCount?: unknown }).runCount !== "undefined" ? (pkt.model as UniverseModelV1) : null) ?? modelRef.current;
+      const runCount = Math.max(0, Math.trunc(Number(m?.runCount ?? decodeSummary?.runCount ?? 0)));
+      const total = Number(m?.likes?.total ?? NaN);
+      const liked = Number(m?.likes?.liked ?? NaN);
+      const likedRatio = total > 0 && Number.isFinite(liked) ? liked / total : undefined;
+      const sourceRecent = Array.isArray(pkt?.recent) ? pkt.recent : history.slice(0, 3);
+      const recent = sourceRecent.slice(0, 3).map((x) => ({
+        question: typeof (x as { question?: unknown }).question === "string" ? (x as { question: string }).question : "",
+        score: Number.isFinite(Number((x as { score?: unknown }).score)) ? Number((x as { score?: unknown }).score) : 0,
+        omega: typeof (x as { omega?: unknown }).omega === "string" ? ((x as { omega?: string }).omega as string) : undefined,
+        signature:
+          typeof (x as { signature?: unknown }).signature === "string" ? ((x as { signature?: string }).signature as string) : undefined,
+      }));
+      return {
+        template: "model_snapshot" as const,
+        modeLabel,
+        localTimeText,
+        utcTimeText,
+        qrUrlText,
+        headline: "该视觉由本机模型参数确定性生成：导入同一模型到其他设备会呈现一致形态。",
+        runCount,
+        likedRatio,
+        recent,
+        model: m ?? null,
+        theta16: Array.isArray(m?.theta16) ? m!.theta16 : [],
+      };
+    }
+
+    return {
+      template: "divination_decode" as const,
+      modeLabel,
+      localTimeText,
+      utcTimeText,
+      qrUrlText,
+      headline: "可复算 · 可追溯 · 本机宇宙常量",
+      question: baseQuestion,
+      conclusionQa,
+      conclusionInsight,
+      score,
+      omega,
+      signature,
+      formulaLatex: formulaFromPacket || undefined,
+      rootDigest: rootDigest || undefined,
+    };
+  }, [
+    decodeAnswerMarkdown,
+    decodeMode,
+    decodeSummary,
+    decodePacket,
+    directSource,
+    history,
+    question,
+    shareCardQrUrl,
+    shareCardTemplate,
+  ]);
+
+  const shareCardPayload = useMemo(() => {
+    return { ...shareCardProps, qrUrl: shareCardQrUrl };
+  }, [shareCardProps, shareCardQrUrl]);
+
+  const shareCardPayloadKey = useMemo(() => {
+    try {
+      return JSON.stringify(shareCardPayload);
+    } catch {
+      return `${shareCardPayload.template}:${Date.now()}`;
+    }
+  }, [shareCardPayload]);
+
+  const generateShareCard = useCallback(async () => {
+    if (shareCardBusy) return;
+    setShareCardError(null);
+    setShareCardBusy(true);
+    try {
+      if (!sharePosterQrDataUrl) throw new Error("二维码未就绪：请稍后重试。");
+      const node = sharePosterRef.current;
+      if (!node) throw new Error("海报节点未就绪：请稍后重试。");
+      const fonts = (document as unknown as { fonts?: { ready?: Promise<void> } }).fonts;
+      if (fonts?.ready) await fonts.ready;
+      const canvas = await html2canvas(node, { backgroundColor: null, scale: 2, useCORS: true, logging: false, removeContainer: true });
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("生成失败：请重试。"))), "image/png");
+      });
+      const nextUrl = URL.createObjectURL(blob);
+      const prevCached = shareCardCacheRef.current.get(shareCardTemplate);
+      if (prevCached?.url) URL.revokeObjectURL(prevCached.url);
+      setShareCardBlob(blob);
+      setShareCardPreviewUrl(nextUrl);
+      shareCardCacheRef.current.set(shareCardTemplate, { key: shareCardPayloadKey, blob, url: nextUrl });
+    } catch (e) {
+      setShareCardBlob(null);
+      setShareCardPreviewUrl(null);
+      setShareCardError(e instanceof Error ? e.message : "生成分享海报失败。");
+    } finally {
+      setShareCardBusy(false);
+    }
+  }, [
+    shareCardBusy,
+    shareCardPayloadKey,
+    shareCardTemplate,
+    sharePosterQrDataUrl,
+  ]);
+
+  useEffect(() => {
+    if (!shareCardOpen) return;
+    setShareCardError(null);
+    const cached = shareCardCacheRef.current.get(shareCardTemplate);
+    if (cached) {
+      setShareCardBlob(cached.blob);
+      setShareCardPreviewUrl(cached.url);
+      return;
+    }
+    setShareCardBlob(null);
+    setShareCardPreviewUrl(null);
+  }, [shareCardOpen, shareCardTemplate]);
+
+  const onShareCardOpen = useCallback(() => {
+    shareCardOpenedAtRef.current = new Date().toISOString();
+    setShareCardError(null);
+    setShareCardOpen(true);
+  }, []);
+
+  const onShareCardClose = useCallback(() => {
+    shareCardCacheRef.current.forEach((v) => {
+      if (v.url) URL.revokeObjectURL(v.url);
+    });
+    shareCardCacheRef.current.clear();
+    setShareCardOpen(false);
+    setShareCardError(null);
+    setShareCardBlob(null);
+    setShareCardPreviewUrl(null);
+    setShareCardBusy(false);
+    setShareCardBusyText("");
+    setShareCardBusyPct(0);
+  }, []);
+
+  const onShareCardDownload = useCallback(() => {
+    if (!shareCardBlob) return;
+    const sig = (shareCardProps.signature || "gua").replace(/[^\w-]+/g, "").slice(0, 12) || "gua";
+    downloadBlob(`gua-share-card-${shareCardProps.template}-${sig}-${Date.now()}.png`, shareCardBlob);
+  }, [shareCardBlob, shareCardProps.signature, shareCardProps.template]);
+
+  const onShareCardCopy = useCallback(async () => {
+    if (!shareCardCopySupported) return;
+    if (!shareCardBlob) return;
+    const ok = await copyPngToClipboard(shareCardBlob);
+    if (!ok) setShareCardError("当前浏览器不支持复制图片到剪贴板。");
+  }, [shareCardBlob, shareCardCopySupported]);
+
   const decodeHistoryDetailContext = useMemo(() => {
     if (!decodeHistoryDetail) return null;
     if (decodeHistoryDetail.context.k === "hid") return loadPacketById(decodeHistoryDetail.context.hid);
@@ -2275,6 +2626,9 @@ export default function CyberGuaApp() {
               </Button>
               <Button radius="xl" variant="default" onClick={onTerminate} disabled={!isRunning}>
                 终止
+              </Button>
+              <Button radius="xl" variant="default" onClick={onShareCardOpen}>
+                分享卡片
               </Button>
             </Group>
             <Group gap="xs">
@@ -3248,6 +3602,99 @@ export default function CyberGuaApp() {
             </Paper>
           </Stack>
         ) : null}
+      </Modal>
+
+      <Modal opened={shareCardOpen} onClose={onShareCardClose} size="lg" centered title="分享海报预览">
+        <Stack gap="md">
+          <Group justify="space-between" align="center" wrap="wrap">
+            <SegmentedControl
+              value={shareCardTemplate}
+              onChange={(v) => setShareCardTemplate(v as ShareCardTemplate)}
+              data={[
+                { value: "ai_direct", label: "AI 直推" },
+                { value: "divination_decode", label: "推演解码" },
+                { value: "model_snapshot", label: "模型快照" },
+              ]}
+            />
+            <Group gap="xs" wrap="wrap">
+              <Button radius="xl" variant="default" onClick={() => void generateShareCard()} disabled={shareCardBusy || !sharePosterQrDataUrl}>
+                {shareCardBusy ? "生成中…" : shareCardPreviewUrl ? "重新生成" : "生成海报"}
+              </Button>
+              <Button radius="xl" variant="default" onClick={onShareCardDownload} disabled={!shareCardBlob}>
+                下载 PNG
+              </Button>
+              <Button radius="xl" variant="default" onClick={() => void onShareCardCopy()} disabled={!shareCardCopySupported || !shareCardBlob}>
+                复制图片
+              </Button>
+            </Group>
+          </Group>
+
+          {shareCardError ? (
+            <Text fz="xs" c="dimmed">
+              {shareCardError}
+            </Text>
+          ) : null}
+          {shareCardBusy ? (
+            <Stack gap={6}>
+              <Text fz="xs" c="dimmed">
+                {shareCardBusyText || "生成中…"}
+              </Text>
+              <Progress value={shareCardBusyPct} animated />
+            </Stack>
+          ) : null}
+
+          <Box style={{ position: "fixed", left: -20000, top: 0, width: 1080, height: 1350, pointerEvents: "none" }}>
+            <SharePoster
+              ref={sharePosterRef}
+              template={shareCardProps.template}
+              modeLabel={shareCardProps.modeLabel}
+              localTimeText={shareCardProps.localTimeText}
+              utcTimeText={shareCardProps.utcTimeText}
+              qrDataUrl={sharePosterQrDataUrl || "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="}
+              qrUrlText={shareCardProps.qrUrlText}
+              headline={shareCardProps.headline}
+              question={shareCardProps.question}
+              conclusionQa={shareCardProps.conclusionQa}
+              conclusionInsight={shareCardProps.conclusionInsight}
+              score={shareCardProps.score}
+              omega={shareCardProps.omega}
+              signature={shareCardProps.signature}
+              rootDigest={shareCardProps.rootDigest}
+              formulaLatex={shareCardProps.formulaLatex}
+              runCount={shareCardProps.runCount}
+              likedRatio={shareCardProps.likedRatio}
+              recent={shareCardProps.recent}
+                model={(shareCardProps as unknown as { model?: UniverseModelV1 | null }).model}
+                theta16={(shareCardProps as unknown as { theta16?: number[] }).theta16}
+            />
+          </Box>
+
+          <Box
+            style={{
+              borderRadius: 16,
+              border: "1px solid var(--line)",
+              background: "var(--surface-2)",
+              overflow: "auto",
+              maxHeight: "70vh",
+              padding: 14,
+            }}
+          >
+            {shareCardPreviewUrl ? (
+              <Box
+                component="img"
+                src={shareCardPreviewUrl}
+                alt="分享海报预览"
+                style={{ display: "block", width: "100%", height: "auto", borderRadius: 12 }}
+              />
+            ) : (
+              <Box p="md">
+                <Text fz="sm" c="dimmed">
+                  {shareCardBusy ? "生成中…" : "暂无预览：请选择类型后点击“生成海报”。"}
+                </Text>
+              </Box>
+            )}
+          </Box>
+        </Stack>
       </Modal>
 
       <AiConfigModal
