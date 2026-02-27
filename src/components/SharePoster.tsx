@@ -72,10 +72,10 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
       if (raf) cancelAnimationFrame(raf);
       ros.forEach((r) => r.disconnect());
     };
-  }, [props.question, props.conclusionQa, props.conclusionInsight, props.template, props.formulaLatex]);
+  }, [props.question, props.conclusionQa, props.conclusionInsight, props.template]);
 
   return (
-    <div className={styles.root} ref={ref}>
+    <div className={styles.root} data-template={props.template} ref={ref}>
       <div className={styles.grain} />
       <div className={styles.topBand} />
 
@@ -194,18 +194,18 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
 
             <div className={styles.conclusions}>
               <div className={styles.card}>
-                <div className={styles.cardTitle}>问题解答</div>
+                <div className={styles.cardTitle}>问题解答 · 结论</div>
                 <div className={styles.cardBody}>
                   <div ref={conclusionQaRef} className={styles.cardText}>
-                    {props.conclusionQa || ""}
+                    {props.conclusionQa || "—"}
                   </div>
                 </div>
               </div>
               <div className={styles.card}>
-                <div className={styles.cardTitle}>模型启示</div>
+                <div className={styles.cardTitle}>模型启示 · 结论</div>
                 <div className={styles.cardBody}>
                   <div ref={conclusionInsightRef} className={styles.cardText}>
-                    {props.conclusionInsight || ""}
+                    {props.conclusionInsight || "—"}
                   </div>
                 </div>
               </div>
@@ -244,14 +244,44 @@ function normalizeTheta16(value: unknown) {
 }
 
 function applyAutoClamp(node: HTMLDivElement) {
-  const st = window.getComputedStyle(node);
-  const fontSize = Number.parseFloat(st.fontSize || "0") || 0;
-  const lineHeightRaw = st.lineHeight || "normal";
-  const lineHeight = lineHeightRaw === "normal" ? fontSize * 1.4 : Number.parseFloat(lineHeightRaw) || fontSize * 1.4;
-  const availableH = Math.max(0, node.clientHeight - 2);
-  if (lineHeight <= 0 || availableH <= 0) return;
-  const lines = Math.max(1, Math.floor(availableH / lineHeight));
-  node.style.setProperty("--clamp", String(lines));
+  applyMeasuredEllipsis(node);
+}
+
+function applyMeasuredEllipsis(node: HTMLDivElement) {
+  const currentText = node.textContent ?? "";
+  const prevRendered = node.dataset.rendered ?? "";
+  if (currentText && currentText !== prevRendered) node.dataset.fulltext = currentText;
+  const fullText = node.dataset.fulltext ?? currentText;
+  if (!fullText) return;
+
+  node.textContent = fullText;
+  const maxH = node.clientHeight;
+  if (maxH <= 0) return;
+  if (node.scrollHeight <= maxH + 1) {
+    node.dataset.rendered = fullText;
+    return;
+  }
+
+  const chars = Array.from(fullText);
+  const suffix = "…";
+  let lo = 0;
+  let hi = chars.length;
+  let best = 0;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const candidate = `${chars.slice(0, mid).join("").trimEnd()}${suffix}`;
+    node.textContent = candidate;
+    if (node.scrollHeight <= maxH + 1) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  const finalText = `${chars.slice(0, Math.max(0, best)).join("").trimEnd()}${suffix}`;
+  node.textContent = finalText;
+  node.dataset.rendered = finalText;
 }
 
 function scaleFormula(container: HTMLDivElement | null) {
@@ -260,8 +290,11 @@ function scaleFormula(container: HTMLDivElement | null) {
   if (!display) return;
   display.style.transform = "";
   display.style.transformOrigin = "left top";
-  const availableW = Math.max(0, container.clientWidth - 12);
-  const availableH = Math.max(0, container.clientHeight - 12);
+  const st = window.getComputedStyle(container);
+  const paddingX = Number.parseFloat(st.paddingLeft || "0") + Number.parseFloat(st.paddingRight || "0");
+  const paddingY = Number.parseFloat(st.paddingTop || "0") + Number.parseFloat(st.paddingBottom || "0");
+  const availableW = Math.max(0, container.clientWidth - paddingX - 2);
+  const availableH = Math.max(0, container.clientHeight - paddingY - 2);
   const width = display.scrollWidth;
   const height = display.scrollHeight;
   if (availableW <= 0 || width <= 0) return;

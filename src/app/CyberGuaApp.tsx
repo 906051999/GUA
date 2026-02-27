@@ -445,22 +445,18 @@ function extractSectionConclusionFromMarkdown(markdown: string, sectionTitle: st
   const raw = unwrapOuterMarkdownFence(markdown || "");
   const lines = raw.split("\n");
   const start = lines.findIndex((l) => l.trim() === `## ${sectionTitle}`);
-  const end =
-    start >= 0
-      ? lines.findIndex((l, i) => i > start && l.trim().startsWith("## "))
-      : -1;
-  const slice = start >= 0 ? lines.slice(start, end > start ? end : undefined) : lines;
+  if (start < 0) return previewFromMarkdown(raw);
+  const end = lines.findIndex((l, i) => i > start && l.trim().startsWith("## "));
+  const slice = lines.slice(start, end > start ? end : undefined);
   const idx = slice.findIndex((l) => l.trim().startsWith("### 结论"));
-  if (idx >= 0) {
-    for (let i = idx + 1; i < Math.min(slice.length, idx + 10); i += 1) {
-      const t = slice[i]?.trim() ?? "";
-      if (!t) continue;
-      if (t.startsWith("#") || t.startsWith(">")) continue;
-      return t.length > 260 ? `${t.slice(0, 260)}…` : t;
-    }
+  if (idx < 0) return previewFromMarkdown(slice.join("\n"));
+  for (let i = idx + 1; i < Math.min(slice.length, idx + 12); i += 1) {
+    const t = slice[i]?.trim() ?? "";
+    if (!t) continue;
+    if (t.startsWith("#") || t.startsWith(">")) continue;
+    return t.length > 220 ? `${t.slice(0, 220)}…` : t;
   }
-  const p = previewFromMarkdown(raw);
-  return p.length > 260 ? `${p.slice(0, 260)}…` : p;
+  return previewFromMarkdown(slice.join("\n"));
 }
 
 export default function CyberGuaApp() {
@@ -2211,14 +2207,13 @@ export default function CyberGuaApp() {
     const rootDigest =
       typeof pkt?.hid === "string" ? (history.find((x) => x.id === pkt.hid)?.root ?? "") : "";
 
-    const conclusionQa = extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "问题解答");
-    const conclusionInsight = extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "模型启示");
-
     const qrUrlText = shareCardQrUrl.replace(/^https?:\/\//, "");
     const modeLabel =
       shareCardTemplate === "ai_direct" ? "AI 直推" : shareCardTemplate === "model_snapshot" ? "模型快照" : "推演解码";
 
     if (shareCardTemplate === "ai_direct") {
+      const conclusionQa = extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "问题解答");
+      const conclusionInsight = extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "模型启示");
       return {
         template: "ai_direct" as const,
         modeLabel,
@@ -2232,6 +2227,7 @@ export default function CyberGuaApp() {
         score,
         omega,
         signature,
+        formulaLatex: formulaFromPacket || undefined,
       };
     }
 
@@ -2272,8 +2268,8 @@ export default function CyberGuaApp() {
       qrUrlText,
       headline: "可复算 · 可追溯 · 本机宇宙常量",
       question: baseQuestion,
-      conclusionQa,
-      conclusionInsight,
+      conclusionQa: extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "问题解答"),
+      conclusionInsight: extractSectionConclusionFromMarkdown(decodeAnswerMarkdown, "模型启示"),
       score,
       omega,
       signature,
@@ -2314,6 +2310,9 @@ export default function CyberGuaApp() {
       if (!node) throw new Error("海报节点未就绪：请稍后重试。");
       const fonts = (document as unknown as { fonts?: { ready?: Promise<void> } }).fonts;
       if (fonts?.ready) await fonts.ready;
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
       const canvas = await html2canvas(node, { backgroundColor: null, scale: 2, useCORS: true, logging: false, removeContainer: true });
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("生成失败：请重试。"))), "image/png");
@@ -3643,30 +3642,38 @@ export default function CyberGuaApp() {
             </Stack>
           ) : null}
 
-          <Box style={{ position: "fixed", left: -20000, top: 0, width: 1080, height: 1350, pointerEvents: "none" }}>
-            <SharePoster
+          <Box style={{ position: "fixed", left: -20000, top: 0, pointerEvents: "none" }}>
+            <Box
               ref={sharePosterRef}
-              template={shareCardProps.template}
-              modeLabel={shareCardProps.modeLabel}
-              localTimeText={shareCardProps.localTimeText}
-              utcTimeText={shareCardProps.utcTimeText}
-              qrDataUrl={sharePosterQrDataUrl || "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="}
-              qrUrlText={shareCardProps.qrUrlText}
-              headline={shareCardProps.headline}
-              question={shareCardProps.question}
-              conclusionQa={shareCardProps.conclusionQa}
-              conclusionInsight={shareCardProps.conclusionInsight}
-              score={shareCardProps.score}
-              omega={shareCardProps.omega}
-              signature={shareCardProps.signature}
-              rootDigest={shareCardProps.rootDigest}
-              formulaLatex={shareCardProps.formulaLatex}
-              runCount={shareCardProps.runCount}
-              likedRatio={shareCardProps.likedRatio}
-              recent={shareCardProps.recent}
+              style={{
+                width: 1080,
+                height: 1350,
+                display: "inline-block",
+              }}
+            >
+              <SharePoster
+                template={shareCardProps.template}
+                modeLabel={shareCardProps.modeLabel}
+                localTimeText={shareCardProps.localTimeText}
+                utcTimeText={shareCardProps.utcTimeText}
+                qrDataUrl={sharePosterQrDataUrl || "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="}
+                qrUrlText={shareCardProps.qrUrlText}
+                headline={shareCardProps.headline}
+                question={shareCardProps.question}
+                conclusionQa={shareCardProps.conclusionQa}
+                conclusionInsight={shareCardProps.conclusionInsight}
+                score={shareCardProps.score}
+                omega={shareCardProps.omega}
+                signature={shareCardProps.signature}
+                rootDigest={shareCardProps.rootDigest}
+                formulaLatex={shareCardProps.formulaLatex}
+                runCount={shareCardProps.runCount}
+                likedRatio={shareCardProps.likedRatio}
+                recent={shareCardProps.recent}
                 model={(shareCardProps as unknown as { model?: UniverseModelV1 | null }).model}
                 theta16={(shareCardProps as unknown as { theta16?: number[] }).theta16}
-            />
+              />
+            </Box>
           </Box>
 
           <Box
