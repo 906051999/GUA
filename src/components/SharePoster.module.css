@@ -339,6 +339,23 @@
   overflow: hidden;
 }
 
+.kickerRow {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.kicker {
+  font-size: 14px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
+.cyberSpacer {
+  height: 8px;
+}
+
 .root[data-template="divination_decode"] .panel {
   padding: 36px;
   gap: 12px;
@@ -393,6 +410,29 @@
 .root[data-template="divination_decode"] .cardBody {
   font-size: 19px;
   line-height: 30px;
+}
+
+.root[data-template="cyber_divination"] .panel {
+  padding: 38px;
+  gap: 14px;
+}
+
+.root[data-template="cyber_divination"] .sigText {
+  font-size: 16px;
+}
+
+.root[data-template="cyber_divination"] .cardBody {
+  font-size: 20px;
+  line-height: 32px;
+}
+
+.cyberConclusions {
+  margin-top: 8px;
+  gap: 12px;
+}
+
+.cyberCard::after {
+  display: none;
 }
 
 .recentList {

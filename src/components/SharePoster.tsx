@@ -7,7 +7,7 @@ import type { UniverseModelV1 } from "@/types/universeModel";
 import { UniverseModelBoard } from "@/components/UniverseModelBoard";
 import styles from "./SharePoster.module.css";
 
-export type SharePosterTemplate = "divination_decode" | "model_snapshot";
+export type SharePosterTemplate = "divination_decode" | "cyber_divination" | "model_snapshot";
 
 export type SharePosterProps = {
   template: SharePosterTemplate;
@@ -41,6 +41,7 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
   const recent = Array.isArray(props.recent) ? props.recent.slice(0, 3) : [];
   const likeText =
     typeof props.likedRatio === "number" && Number.isFinite(props.likedRatio) ? `${Math.round(props.likedRatio * 100)}%` : "—";
+  const isCyber = props.template === "cyber_divination";
   const formulaRef = useRef<HTMLDivElement | null>(null);
   const questionRef = useRef<HTMLDivElement | null>(null);
   const conclusionQaRef = useRef<HTMLDivElement | null>(null);
@@ -101,35 +102,47 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
       </div>
 
       <div className={styles.panel}>
-        {props.template === "divination_decode" ? (
+        {props.template === "divination_decode" || props.template === "cyber_divination" ? (
           <>
-            <div className={styles.sigRow}>
-              <div className={`${styles.mono} ${styles.sigText}`}>
-                SIGN {props.signature || ""}
-                {props.rootDigest ? ` · ROOT ${props.rootDigest}` : ""}
+            {isCyber ? (
+              <div className={styles.kickerRow}>
+                <div className={`${styles.mono} ${styles.kicker}`}>补全 · 真太阳时 · 证据链</div>
               </div>
-              <div className={styles.statMeta}>可复算 · 可追溯</div>
-            </div>
-
-            <div className={styles.statsRow}>
-              <div className={styles.statMain}>Score {score}</div>
-              <div className={styles.statMeta}>DIVINATION · DECODE</div>
-            </div>
-
-            <div className={styles.omegaRow}>
-              <div className={styles.omegaSymbol}>Ω</div>
-              <div style={{ fontSize: 34, fontWeight: 700, opacity: 0.86 }}>
-                <InlineMath math={omega} />
-              </div>
-            </div>
-
-            {props.formulaLatex ? (
-              <div className={styles.formulaBox} ref={formulaRef}>
-                <div className="gua-formula-block">
-                  <BlockMath math={props.formulaLatex} />
+            ) : (
+              <div className={styles.sigRow}>
+                <div className={`${styles.mono} ${styles.sigText}`}>
+                  SIGN {props.signature || ""}
+                  {props.rootDigest ? ` · ROOT ${props.rootDigest}` : ""}
                 </div>
+                <div className={styles.statMeta}>可复算 · 可追溯</div>
               </div>
-            ) : null}
+            )}
+
+            {isCyber ? (
+              <div className={styles.cyberSpacer} />
+            ) : (
+              <>
+                <div className={styles.statsRow}>
+                  <div className={styles.statMain}>Score {score}</div>
+                  <div className={styles.statMeta}>DIVINATION · DECODE</div>
+                </div>
+
+                <div className={styles.omegaRow}>
+                  <div className={styles.omegaSymbol}>Ω</div>
+                  <div style={{ fontSize: 34, fontWeight: 700, opacity: 0.86 }}>
+                    <InlineMath math={omega} />
+                  </div>
+                </div>
+
+                {props.formulaLatex ? (
+                  <div className={styles.formulaBox} ref={formulaRef}>
+                    <div className="gua-formula-block">
+                      <BlockMath math={props.formulaLatex} />
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )}
           </>
         ) : null}
 
@@ -184,7 +197,7 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
           </>
         ) : null}
 
-        {props.template !== "model_snapshot" ? (
+        {props.template !== "model_snapshot" && !isCyber ? (
           <>
             <div className={styles.questionWrap}>
               <div className={styles.sectionLabel}>问题</div>
@@ -195,7 +208,7 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
 
             <div className={styles.conclusions}>
               <div className={styles.card}>
-                <div className={styles.cardTitle}>问题解答 · 结论</div>
+                <div className={styles.cardTitle}>{isCyber ? "结论" : "问题解答 · 结论"}</div>
                 <div className={styles.cardBody}>
                   <div ref={conclusionQaRef} className={styles.cardText}>
                     {props.conclusionQa || "—"}
@@ -203,7 +216,7 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
                 </div>
               </div>
               <div className={styles.card}>
-                <div className={styles.cardTitle}>模型启示 · 结论</div>
+                <div className={styles.cardTitle}>{isCyber ? "你可以怎么做" : "模型启示 · 结论"}</div>
                 <div className={styles.cardBody}>
                   <div ref={conclusionInsightRef} className={styles.cardText}>
                     {props.conclusionInsight || "—"}
@@ -212,6 +225,27 @@ export const SharePoster = forwardRef<HTMLDivElement, SharePosterProps>(function
               </div>
             </div>
           </>
+        ) : null}
+
+        {isCyber ? (
+          <div className={`${styles.conclusions} ${styles.cyberConclusions}`}>
+            <div className={`${styles.card} ${styles.cyberCard}`}>
+              <div className={styles.cardTitle}>结论</div>
+              <div className={styles.cardBody}>
+                <div ref={conclusionQaRef} className={styles.cardText}>
+                  {props.conclusionQa || "—"}
+                </div>
+              </div>
+            </div>
+            <div className={`${styles.card} ${styles.cyberCard}`}>
+              <div className={styles.cardTitle}>行动</div>
+              <div className={styles.cardBody}>
+                <div ref={conclusionInsightRef} className={styles.cardText}>
+                  {props.conclusionInsight || "—"}
+                </div>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         <div className={styles.footer}>

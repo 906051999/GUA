@@ -1,4 +1,4 @@
-export type ShareCardTemplate = "divination_decode" | "model_snapshot";
+export type ShareCardTemplate = "divination_decode" | "cyber_divination" | "model_snapshot";
 
 export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);

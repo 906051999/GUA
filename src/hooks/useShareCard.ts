@@ -112,6 +112,7 @@ export function useShareCard(args: {
   decodeMode: DecodeMode;
   decodePacket: unknown | null;
   directSource: DirectSource;
+  defaultTemplate?: ShareCardTemplate;
   question: string;
   history: Array<{ id: string; question: string; score: number; omega?: string; signature?: string; root?: string }>;
   modelRef: MutableRefObject<UniverseModelV1 | null>;
@@ -181,11 +182,12 @@ export function useShareCard(args: {
     typeof window !== "undefined" && typeof navigator?.clipboard?.write === "function" && typeof ClipboardItem !== "undefined";
 
   const shareCardDefaultTemplate = useMemo<ShareCardTemplate>(() => {
-    if (args.decodeMode === "cyber") return args.decodeAnswerMarkdown.trim() ? "divination_decode" : "model_snapshot";
+    if (args.defaultTemplate) return args.defaultTemplate;
+    if (args.decodeMode === "cyber") return "cyber_divination";
     if (args.decodeMode === "model_current") return "model_snapshot";
     if (!args.decodePacket) return "model_snapshot";
     return "divination_decode";
-  }, [args.decodeAnswerMarkdown, args.decodeMode, args.decodePacket]);
+  }, [args.decodeMode, args.decodePacket, args.defaultTemplate]);
 
   useEffect(() => {
     if (!shareCardOpen) return;
@@ -242,7 +244,9 @@ export function useShareCard(args: {
     const rootDigest = typeof pkt?.hid === "string" ? (args.history.find((x) => x.id === pkt.hid)?.root ?? "") : "";
 
     const qrUrlText = shareCardQrUrl.replace(/^https?:\/\//, "");
-    const modeLabel = shareCardTemplate === "model_snapshot" ? "模型快照" : args.decodeMode === "cyber" ? "赛博算卦" : "推演解码";
+    const modeLabel =
+      shareCardTemplate === "model_snapshot" ? "模型快照" : shareCardTemplate === "cyber_divination" ? "赛博算卦" : "推演解码";
+    const isCyber = shareCardTemplate === "cyber_divination";
 
     if (shareCardTemplate === "model_snapshot") {
       const m =
@@ -275,19 +279,19 @@ export function useShareCard(args: {
     }
 
     return {
-      template: "divination_decode" as const,
+      template: isCyber ? "cyber_divination" : "divination_decode",
       modeLabel,
       localTimeText,
       utcTimeText,
       qrUrlText,
-      headline: args.decodeMode === "cyber" ? "读取本机快照 · 随机方向推演" : "可复算 · 可追溯 · 本机宇宙常量",
+      headline: isCyber ? "随机方向推演" : "可复算 · 可追溯 · 本机宇宙常量",
       question: baseQuestion,
       conclusionQa:
-        args.decodeMode === "cyber"
+        isCyber
           ? extractNextBodyLineFromHeadings(args.decodeAnswerMarkdown, ["结论", "结论（约100字）"])
           : extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "问题解答"),
       conclusionInsight:
-        args.decodeMode === "cyber"
+        isCyber
           ? extractFirstBulletFromHeadings(args.decodeAnswerMarkdown, "你可以怎么做")
           : extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "模型启示"),
       score,
@@ -298,7 +302,6 @@ export function useShareCard(args: {
     };
   }, [
     args.decodeAnswerMarkdown,
-    args.decodeMode,
     args.decodePacket,
     args.decodeSummary,
     args.history,
@@ -368,8 +371,9 @@ export function useShareCard(args: {
   const open = useCallback(() => {
     shareCardOpenedAtRef.current = new Date().toISOString();
     setShareCardError(null);
+    setShareCardTemplate(shareCardDefaultTemplate);
     setShareCardOpen(true);
-  }, []);
+  }, [shareCardDefaultTemplate]);
 
   const close = useCallback(() => {
     shareCardCacheRef.current.forEach((v) => {

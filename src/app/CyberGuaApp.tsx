@@ -2181,11 +2181,28 @@ export default function CyberGuaApp(props: { variant?: "ai" | "cyber" } = {}) {
     decodeMode: isCyber ? "cyber" : decodeMode,
     decodePacket: isCyber ? cyberLastContext : decodePacket,
     directSource: isCyber ? "current" : directSource,
+    defaultTemplate: isCyber ? "cyber_divination" : "divination_decode",
     question,
     history,
     modelRef,
     decodeAnswerMarkdown: isCyber ? cyberAnswerMarkdown : decodeAnswerMarkdown,
     decodeSummary: isCyber ? cyberShareSummary : decodeSummary,
+  });
+
+  const modelShareSummary = useMemo(() => {
+    return { score: 0, sig: "—", omega: "—", questionText: "模型快照", runCount: model?.runCount ?? null };
+  }, [model?.runCount]);
+
+  const modelShareCard = useShareCard({
+    decodeMode: "model_current",
+    decodePacket: null,
+    directSource: "current",
+    defaultTemplate: "model_snapshot",
+    question,
+    history,
+    modelRef,
+    decodeAnswerMarkdown: "",
+    decodeSummary: modelShareSummary,
   });
 
   const decodeHistoryDetailContext = useMemo(() => {
@@ -2687,6 +2704,11 @@ export default function CyberGuaApp(props: { variant?: "ai" | "cyber" } = {}) {
               该视觉由本机模型参数确定性生成：导入同一模型到其他设备会呈现一致形态。
             </Text>
           </Box>
+          <Group justify="flex-end">
+            <Button radius="xl" variant="default" onClick={modelShareCard.open}>
+              分享模型快照
+            </Button>
+          </Group>
           <Box className="gua-viz-shell" style={{ overflow: "hidden" }}>
             <UniverseModelViz
               model={model}
@@ -2784,6 +2806,11 @@ export default function CyberGuaApp(props: { variant?: "ai" | "cyber" } = {}) {
         onClose={shareCard.close}
         template={shareCard.template}
         setTemplate={shareCard.setTemplate}
+        templates={
+          isCyber
+            ? [{ value: "cyber_divination", label: "赛博算卦" }]
+            : [{ value: "divination_decode", label: "推演解码" }]
+        }
         busy={shareCard.busy}
         busyText={shareCard.busyText}
         busyPct={shareCard.busyPct}
@@ -2797,6 +2824,27 @@ export default function CyberGuaApp(props: { variant?: "ai" | "cyber" } = {}) {
         onCopy={() => void shareCard.copy()}
         sharePosterRef={shareCard.sharePosterRef}
         sharePosterProps={shareCard.sharePosterProps}
+      />
+
+      <ShareCardModal
+        opened={modelShareCard.opened}
+        onClose={modelShareCard.close}
+        template={modelShareCard.template}
+        setTemplate={modelShareCard.setTemplate}
+        templates={[{ value: "model_snapshot", label: "模型快照" }]}
+        busy={modelShareCard.busy}
+        busyText={modelShareCard.busyText}
+        busyPct={modelShareCard.busyPct}
+        error={modelShareCard.error}
+        previewUrl={modelShareCard.previewUrl}
+        blobPresent={Boolean(modelShareCard.blob)}
+        qrDataUrl={modelShareCard.qrDataUrl}
+        copySupported={modelShareCard.copySupported}
+        onGenerate={() => void modelShareCard.generate()}
+        onDownload={modelShareCard.download}
+        onCopy={() => void modelShareCard.copy()}
+        sharePosterRef={modelShareCard.sharePosterRef}
+        sharePosterProps={modelShareCard.sharePosterProps}
       />
 
       <AiConfigModal

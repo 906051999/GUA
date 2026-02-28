@@ -12,6 +12,7 @@ export function ShareCardModal({
   onClose,
   template,
   setTemplate,
+  templates,
   busy,
   busyText,
   busyPct,
@@ -30,6 +31,7 @@ export function ShareCardModal({
   onClose: () => void;
   template: ShareCardTemplate;
   setTemplate: (v: ShareCardTemplate) => void;
+  templates?: Array<{ value: ShareCardTemplate; label: string }>;
   busy: boolean;
   busyText: string;
   busyPct: number;
@@ -44,18 +46,25 @@ export function ShareCardModal({
   sharePosterRef: RefObject<HTMLDivElement | null>;
   sharePosterProps: Omit<SharePosterProps, "qrDataUrl">;
 }) {
+  const data =
+    templates ??
+    ([
+      { value: "divination_decode", label: "推演解码" },
+      { value: "model_snapshot", label: "模型快照" },
+    ] satisfies Array<{ value: ShareCardTemplate; label: string }>);
+  const showTemplateSwitch = data.length > 1;
+
   return (
     <Modal opened={opened} onClose={onClose} size="lg" centered title="分享海报预览">
       <Stack gap="md">
         <Group justify="space-between" align="center" wrap="wrap">
-          <SegmentedControl
-            value={template}
-            onChange={(v) => setTemplate(v as ShareCardTemplate)}
-            data={[
-              { value: "divination_decode", label: "推演解码" },
-              { value: "model_snapshot", label: "模型快照" },
-            ]}
-          />
+          {showTemplateSwitch ? (
+            <SegmentedControl
+              value={template}
+              onChange={(v) => setTemplate(v as ShareCardTemplate)}
+              data={data}
+            />
+          ) : null}
           <Group gap="xs" wrap="wrap">
             <Button radius="xl" variant="default" onClick={onGenerate} disabled={busy || !qrDataUrl}>
               {busy ? "生成中…" : previewUrl ? "重新生成" : "生成海报"}
@@ -116,7 +125,7 @@ export function ShareCardModal({
           ) : (
             <Box p="md">
               <Text fz="sm" c="dimmed">
-                {busy ? "生成中…" : "暂无预览：请选择类型后点击“生成海报”。"}
+                {busy ? "生成中…" : showTemplateSwitch ? "暂无预览：请选择类型后点击“生成海报”。" : "暂无预览：点击“生成海报”。"}
               </Text>
             </Box>
           )}
