@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   const obj = body as { mode?: unknown; context?: unknown; options?: unknown } | null;
   const mode = typeof obj?.mode === "string" ? obj.mode : null;
   if (!mode) return new Response("缺少 mode。", { status: 400 });
-  if (mode !== "result_current" && mode !== "model_current" && mode !== "result_history" && mode !== "llm_direct") {
+  if (mode !== "result_current" && mode !== "model_current" && mode !== "result_history" && mode !== "cyber") {
     return new Response("mode 不支持。", { status: 400 });
   }
   if (!obj?.context) return new Response("缺少 context。", { status: 400 });

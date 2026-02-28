@@ -1,4 +1,4 @@
-export type ShareCardTemplate = "ai_direct" | "divination_decode" | "model_snapshot";
+export type ShareCardTemplate = "divination_decode" | "model_snapshot";
 
 export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
@@ -19,4 +19,3 @@ export async function copyPngToClipboard(blob: Blob) {
     return false;
   }
 }
-

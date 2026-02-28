@@ -20,6 +20,7 @@ type UpstreamDelta = {
     message?: { content?: string; reasoning_content?: string };
     reasoning_content?: string;
     text?: string;
+    finish_reason?: string | null;
   }>;
   output_text?: string;
   content?: string;
@@ -44,6 +45,13 @@ function extractParts(payload: unknown): { content: string; reasoning: string } 
     content: typeof content === "string" ? content : "",
     reasoning: typeof reasoning === "string" ? reasoning : "",
   };
+}
+
+function extractFinishReason(payload: unknown) {
+  const obj = payload as UpstreamDelta;
+  const c0 = Array.isArray(obj?.choices) ? obj.choices[0] : undefined;
+  const fr = c0?.finish_reason;
+  return typeof fr === "string" ? fr : null;
 }
 
 function sseLine(data: unknown) {
@@ -100,11 +108,13 @@ export async function runBigmodelDecode(req: DecodeRequest): Promise<Response> {
     const text = await upstream.text().catch(() => "");
     let content = "";
     let reasoning = "";
+    let finishReason: string | null = null;
     try {
       const json = JSON.parse(text) as unknown;
       const parts = extractParts(json);
       content = parts.content;
       reasoning = parts.reasoning;
+      finishReason = extractFinishReason(json);
     } catch {
       content = text;
     }
@@ -113,7 +123,7 @@ export async function runBigmodelDecode(req: DecodeRequest): Promise<Response> {
       start(controller) {
         if (reasoning) controller.enqueue(encoder.encode(sseLine({ t: "r", d: reasoning })));
         if (content) controller.enqueue(encoder.encode(sseLine({ t: "c", d: content })));
-        controller.enqueue(encoder.encode(sseLine({ t: "done" })));
+        controller.enqueue(encoder.encode(sseLine({ t: "done", finishReason })));
         controller.close();
       },
     });
@@ -133,6 +143,7 @@ export async function runBigmodelDecode(req: DecodeRequest): Promise<Response> {
     async start(controller) {
       const reader = upstream.body!.getReader();
       let buffer = "";
+      let finishReason: string | null = null;
       try {
         while (true) {
           const { value, done } = await reader.read();
@@ -150,13 +161,15 @@ export async function runBigmodelDecode(req: DecodeRequest): Promise<Response> {
             const data = line.slice(5).trim();
             if (!data) continue;
             if (data === "[DONE]") {
-              controller.enqueue(encoder.encode(sseLine({ t: "done" })));
+              controller.enqueue(encoder.encode(sseLine({ t: "done", finishReason })));
               controller.close();
               return;
             }
             try {
               const json = JSON.parse(data) as unknown;
               const { content, reasoning } = extractParts(json);
+              const fr = extractFinishReason(json);
+              if (fr) finishReason = fr;
               if (reasoning) controller.enqueue(encoder.encode(sseLine({ t: "r", d: reasoning })));
               if (content) controller.enqueue(encoder.encode(sseLine({ t: "c", d: content })));
             } catch {
@@ -171,6 +184,7 @@ export async function runBigmodelDecode(req: DecodeRequest): Promise<Response> {
         reader.releaseLock();
       }
 
+      buffer += decoder.decode();
       if (buffer.trim()) {
         const lines = buffer.split("\n");
         for (const rawLine of lines) {
@@ -182,6 +196,8 @@ export async function runBigmodelDecode(req: DecodeRequest): Promise<Response> {
           try {
             const json = JSON.parse(data) as unknown;
             const { content, reasoning } = extractParts(json);
+            const fr = extractFinishReason(json);
+            if (fr) finishReason = fr;
             if (reasoning) controller.enqueue(encoder.encode(sseLine({ t: "r", d: reasoning })));
             if (content) controller.enqueue(encoder.encode(sseLine({ t: "c", d: content })));
           } catch {
@@ -190,7 +206,7 @@ export async function runBigmodelDecode(req: DecodeRequest): Promise<Response> {
         }
       }
 
-      controller.enqueue(encoder.encode(sseLine({ t: "done" })));
+      controller.enqueue(encoder.encode(sseLine({ t: "done", finishReason })));
       controller.close();
     },
   });

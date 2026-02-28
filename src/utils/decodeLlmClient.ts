@@ -1,4 +1,4 @@
-export type DecodeMode = "result_current" | "model_current" | "result_history" | "llm_direct";
+export type DecodeMode = "result_current" | "model_current" | "result_history" | "cyber";
 
 export type DecodeOptions = {
   model?: string | null;
@@ -71,9 +71,7 @@ export async function streamDecode(
     consume();
   }
 
-  if (buffer.trim()) {
-    buffer += "\n\n";
-    consume();
-  }
+  buffer += decoder.decode();
+  if (buffer.trim()) buffer += "\n\n";
+  consume();
 }
-

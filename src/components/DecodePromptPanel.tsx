@@ -2,7 +2,7 @@
 
 import { Badge, Box, Button, Group, Paper, SegmentedControl, Stack, Text, type SegmentedControlItem } from "@mantine/core";
 
-export type DecodeMode = "result_current" | "model_current" | "result_history" | "llm_direct";
+export type DecodeMode = "result_current" | "model_current" | "result_history" | "cyber";
 export type DirectSource = "current" | "last" | "history";
 
 export type HistoryItemV1 = {
@@ -23,7 +23,6 @@ const DECODE_MODE_OPTIONS: SegmentedControlItem[] = [
   { value: "result_current", label: "当前结果" },
   { value: "model_current", label: "模型" },
   { value: "result_history", label: "历史" },
-  { value: "llm_direct", label: "直推演" },
 ];
 
 function formatIsoMinute(value: string | number) {
@@ -36,6 +35,9 @@ function formatIsoMinute(value: string | number) {
 export function DecodePromptPanel(props: {
   decodeMode: DecodeMode;
   setDecodeMode: (mode: DecodeMode) => void;
+  modeOptions?: SegmentedControlItem[];
+  titleText?: string;
+  backLabel?: string;
   directSource: DirectSource;
   setDirectSource: (source: DirectSource) => void;
   decodeHistoryPickId: string | null;
@@ -44,7 +46,10 @@ export function DecodePromptPanel(props: {
   onBack: () => void;
   summaryText: string;
 }) {
+  const modeOptions = props.modeOptions ?? DECODE_MODE_OPTIONS;
   const showHistoryPicker = props.decodeMode === "result_history";
+  const titleText = props.titleText ?? "解码模式";
+  const backLabel = props.backLabel ?? "返回";
 
   return (
     <Stack gap="md">
@@ -52,24 +57,26 @@ export function DecodePromptPanel(props: {
         <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Stack gap={2} style={{ minWidth: 180, flex: "1 1 180px" }}>
             <Text fw={600} fz="sm">
-              解码模式
+              {titleText}
             </Text>
             <Text fz="xs" c="dimmed" lineClamp={1}>
               {props.summaryText || "—"}
             </Text>
           </Stack>
           <Button radius="xl" variant="default" onClick={props.onBack}>
-            返回
+            {backLabel}
           </Button>
         </Group>
 
-        <SegmentedControl
-          mt="sm"
-          fullWidth
-          value={props.decodeMode}
-          onChange={(v) => props.setDecodeMode(v as DecodeMode)}
-          data={DECODE_MODE_OPTIONS}
-        />
+        {modeOptions.length > 1 ? (
+          <SegmentedControl
+            mt="sm"
+            fullWidth
+            value={props.decodeMode}
+            onChange={(v) => props.setDecodeMode(v as DecodeMode)}
+            data={modeOptions}
+          />
+        ) : null}
       </Paper>
 
       {showHistoryPicker ? (

@@ -52,7 +52,6 @@ export function ShareCardModal({
             value={template}
             onChange={(v) => setTemplate(v as ShareCardTemplate)}
             data={[
-              { value: "ai_direct", label: "AI 直推" },
               { value: "divination_decode", label: "推演解码" },
               { value: "model_snapshot", label: "模型快照" },
             ]}
@@ -126,4 +125,3 @@ export function ShareCardModal({
     </Modal>
   );
 }
-

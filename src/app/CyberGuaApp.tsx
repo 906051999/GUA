@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Lunar } from "lunar-javascript";
 import {
   ActionIcon,
   Box,
@@ -8,8 +9,11 @@ import {
   Container,
   Group,
   Modal,
+  SegmentedControl,
+  SimpleGrid,
   Stack,
   Text,
+  TextInput,
   Title,
   UnstyledButton,
 } from "@mantine/core";
@@ -17,6 +21,7 @@ import { MarkdownStream } from "@/components/MarkdownStream";
 import { DecodeHistoryModals, DecodeTabContent } from "@/components/DecodeTabContent";
 import { AiConfigModal } from "@/components/AiConfigModal";
 import { ShareCardModal } from "@/components/ShareCardModal";
+import { ConfigBar } from "@/components/ConfigBar";
 import { ResultTabSection } from "@/components/ResultTabSection";
 import { SettingsModals } from "@/components/SettingsModals";
 import { DivinationHistoryModals } from "@/components/DivinationHistoryModals";
@@ -24,7 +29,7 @@ import { InputTabSection } from "@/components/InputTabSection";
 import { ComputingTabSection } from "@/components/ComputingTabSection";
 import { UniverseModelViz } from "@/components/UniverseModelViz";
 import { useShareCard } from "@/hooks/useShareCard";
-import { ABOUT_ALGORITHM_MARKDOWN } from "@/content/aboutAlgorithm";
+import { ABOUT_AI_MARKDOWN, ABOUT_CYBER_MARKDOWN, ABOUT_IDEA_MARKDOWN } from "@/content/aboutAlgorithm";
 import type { UniverseModelV1 } from "@/types/universeModel";
 import type { DivinationExtras, DivinationResult, DivinationTraceEvent } from "@/utils/divinationEngine";
 import { divineWithTrace } from "@/utils/divinationEngine";
@@ -63,9 +68,18 @@ import {
 
 type Phase = "input" | "computing" | "result" | "decode";
 
-type DecodeMode = "result_current" | "model_current" | "result_history" | "llm_direct";
+type DecodeMode = "result_current" | "model_current" | "result_history" | "cyber";
 
 type DirectSource = "current" | "last" | "history";
+
+type CyberUserInputV1 = {
+  gender: "" | "male" | "female" | "other";
+  calendar: "" | "solar" | "lunar";
+  birthDate: string;
+  birthTime: string;
+  birthPlaceText: string;
+  longitude: string;
+};
 
 type LlmModelConfig = {
   id: string;
@@ -119,11 +133,48 @@ const DECODE_PREFIX = "gua.decodePacket.v1:";
 const DECODE_OUTPUT_KEY = "gua.decodeOutput.v1";
 const DECODE_AI_HISTORY_KEY = "gua.decodeAiHistory.v1";
 
-export default function CyberGuaApp() {
+const EMPTY_CYBER_USER_INPUT: CyberUserInputV1 = {
+  gender: "",
+  calendar: "",
+  birthDate: "",
+  birthTime: "",
+  birthPlaceText: "",
+  longitude: "",
+};
+
+function dayOfYearUTC(d: Date) {
+  const year = d.getUTCFullYear();
+  const start = Date.UTC(year, 0, 1);
+  const current = Date.UTC(year, d.getUTCMonth(), d.getUTCDate());
+  return Math.floor((current - start) / 86400000) + 1;
+}
+
+function equationOfTimeMinutes(d: Date) {
+  const n = dayOfYearUTC(d);
+  const B = (2 * Math.PI * (n - 81)) / 364;
+  const e = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+  return Number.isFinite(e) ? e : 0;
+}
+
+function parseLongitudeDeg(text: string) {
+  const t = (text ?? "").trim();
+  if (!t) return null;
+  const v = Number(t);
+  if (!Number.isFinite(v)) return null;
+  if (v < -180 || v > 180) return null;
+  return v;
+}
+
+export default function CyberGuaApp(props: { variant?: "ai" | "cyber" } = {}) {
+  const initialFeature = props.variant === "cyber" ? "cyber" : "ai";
+  const [feature, setFeature] = useState<"ai" | "cyber">(initialFeature);
+  const isCyber = feature === "cyber";
+
   const [runPhase, setRunPhase] = useState<Phase>("input");
   const [activeTab, setActiveTab] = useState<Phase>("input");
   const [isRunning, setIsRunning] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [aboutTab, setAboutTab] = useState<"idea" | "ai" | "cyber">("idea");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsHelpOpen, setSettingsHelpOpen] = useState(false);
   const [settingsHelpTopic, setSettingsHelpTopic] = useState<SettingsHelpTopic>("status");
@@ -167,6 +218,16 @@ export default function CyberGuaApp() {
   const [directSource, setDirectSource] = useState<DirectSource>("current");
   const [decodeAuto, setDecodeAuto] = useState(true);
   const [decodeReasoningOpen, setDecodeReasoningOpen] = useState(false);
+  const [cyberError, setCyberError] = useState<string | null>(null);
+  const [cyberStreaming, setCyberStreaming] = useState(false);
+  const [cyberAnswer, setCyberAnswer] = useState("");
+  const [cyberReasoning, setCyberReasoning] = useState("");
+  const [cyberAuto, setCyberAuto] = useState(true);
+  const [cyberReasoningOpen, setCyberReasoningOpen] = useState(false);
+  const [cyberLastContext, setCyberLastContext] = useState<unknown | null>(null);
+  const [cyberStartOpen, setCyberStartOpen] = useState(false);
+  const [cyberStartMode, setCyberStartMode] = useState<"fill" | "auto">("auto");
+  const [cyberUserInput, setCyberUserInput] = useState<CyberUserInputV1>(EMPTY_CYBER_USER_INPUT);
   const [llmConfig, setLlmConfig] = useState<LlmConfigResponse | null>(null);
   const [llmConfigError, setLlmConfigError] = useState<string | null>(null);
   const [decodeModel, setDecodeModel] = useState<string | null>(null);
@@ -181,14 +242,22 @@ export default function CyberGuaApp() {
   const decodeOutProgrammatic = useRef(false);
   const decodeReasonProgrammatic = useRef(false);
   const decodePendingRef = useRef<{ a: string; r: string; raf: number; timer: number }>({ a: "", r: "", raf: 0, timer: 0 });
+  const cyberAbortRef = useRef<AbortController | null>(null);
+  const cyberOutRef = useRef<HTMLDivElement | null>(null);
+  const cyberReasonRef = useRef<HTMLDivElement | null>(null);
+  const cyberOutProgrammatic = useRef(false);
+  const cyberReasonProgrammatic = useRef(false);
+  const cyberPendingRef = useRef<{ a: string; r: string; raf: number; timer: number }>({ a: "", r: "", raf: 0, timer: 0 });
   const decodeRestoreOnceRef = useRef(false);
   const decodePrefRestoredRef = useRef({ model: false, stream: false, thinking: false });
   const decodePrefTouchedRef = useRef({ model: false, stream: false, thinking: false });
-  const decodeAutoStartRef = useRef(false);
   const computeSpeedMulRef = useRef(1);
   const decodeReasoningOpenRef = useRef(false);
   const decodeReasoningManualRef = useRef(false);
   const decodeAutoCollapseArmedRef = useRef(false);
+  const cyberReasoningOpenRef = useRef(false);
+  const cyberReasoningManualRef = useRef(false);
+  const cyberAutoCollapseArmedRef = useRef(false);
 
   const runIdRef = useRef(0);
   const modelRef = useRef<UniverseModelV1 | null>(null);
@@ -340,7 +409,7 @@ export default function CyberGuaApp() {
     }
 
     const normalizeDecodeMode = (value: unknown): DecodeMode => {
-      return value === "result_current" || value === "model_current" || value === "result_history" || value === "llm_direct"
+      return value === "result_current" || value === "model_current" || value === "result_history" || value === "cyber"
         ? value
         : "result_current";
     };
@@ -445,6 +514,10 @@ export default function CyberGuaApp() {
   }, [decodeReasoningOpen]);
 
   useEffect(() => {
+    cyberReasoningOpenRef.current = cyberReasoningOpen;
+  }, [cyberReasoningOpen]);
+
+  useEffect(() => {
     modelLibraryRef.current = modelLibrary;
   }, [modelLibrary]);
 
@@ -458,7 +531,7 @@ export default function CyberGuaApp() {
     try {
       const raw = sessionStorage.getItem(DECODE_OUTPUT_KEY);
       const normalizeDecodeMode = (value: unknown): DecodeMode => {
-        return value === "result_current" || value === "model_current" || value === "result_history" || value === "llm_direct"
+        return value === "result_current" || value === "model_current" || value === "result_history" || value === "cyber"
           ? value
           : "result_current";
       };
@@ -480,7 +553,7 @@ export default function CyberGuaApp() {
         updatedAt?: number;
       }>(raw);
       if (saved) {
-        if (saved.mode) setDecodeMode(normalizeDecodeMode(saved.mode));
+        if (!isCyber && saved.mode) setDecodeMode(normalizeDecodeMode(saved.mode));
         if (saved.model !== undefined) {
           decodePrefRestoredRef.current.model = true;
           setDecodeModel(saved.model ?? null);
@@ -508,7 +581,7 @@ export default function CyberGuaApp() {
     } catch {
       decodeRestoreOnceRef.current = true;
     }
-  }, []);
+  }, [isCyber]);
 
   const setDecodeModelFromUser = useCallback((v: string | null) => {
     decodePrefTouchedRef.current.model = true;
@@ -1261,34 +1334,6 @@ export default function CyberGuaApp() {
     return { score, sig, omega, questionText, runCount: Number.isFinite(runCount) ? runCount : null };
   }, [decodePacket]);
 
-  const llmLogic = useMemo(() => {
-    return [
-      "本文描述一种面向“个人宇宙常量”的确定性推演流程。系统以问题、时间与本地观测构造种子，生成可解释的符号参数集，并据此合成表达式结构；推演阶段分层揭示参数与结构，归一阶段将其数值化求解，输出标量Ω及其可复算的代入等式。推演次数越多，本机常量将缓慢收敛，形成专属法则。",
-      "",
-      "系统四步：输入→推演→归一→解码。",
-      "",
-      "输入：问题文本 x、起卦时间 t、可选昵称 n。",
-      "观测：浏览器被动采集 o（设备/系统/网络/偏好等），可选增强观测 o+（需授权），以及用户交互扰动 e（微熵）。",
-      "模型：本机宇宙常量模型 M 存于本地，会随推演次数缓慢收敛。",
-      "",
-      "推演方法论：",
-      "- 用 (t, x, n, o, o+, e, M) 构造种子 s，并驱动可复算的伪随机过程。",
-      "- 生成参数集合 Θ（含 Q,T,N,ε,α,β,γ 与阶段因子 Φi），并附带中文语义标签。",
-      "- 合成表达式结构 f(·)，得到公式 Ω = f(Θ)。",
-      "",
-      "归一方法论：",
-      "- 对参数闭式进行解析并数值化得到 \\hat{Θ}。",
-      "- 对表达式树递归求值，得到 Ω 数值（有限优先）。",
-      "- 输出：Ω 等式、Ω 数值、Score（0-100）、可选签文 signature。",
-      "",
-      "解码原则：解答与启示必须服务于用户，必须落到“对你意味着什么”。问题解答给出问题趋势；模型启示用深读参数引导主观能动性。",
-      "趋势原则：趋势可正可负可中性可混合；禁止无证据地总是积极或总是消极。趋势不等于命运，主观能动性可改写路径。",
-      "输出格式：必须 Markdown；包含“## 问题解答”“## 模型启示”；两块各包含“### 结论（约100字）”小节，下一行写 80–140 字总结。",
-      "",
-      "边界：输出不承诺对应现实世界，只承诺对应“你的宇宙”。",
-    ].join("\n");
-  }, []);
-
   function loadPacketById(id: string) {
     const saved = safeJsonParse<unknown>(localStorage.getItem(`${DECODE_PREFIX}${id}`));
     if (saved) return saved;
@@ -1412,36 +1457,7 @@ export default function CyberGuaApp() {
       setDecodeError(null);
       return;
     }
-
-    if (decodeMode === "llm_direct") {
-      const m = modelRef.current;
-      const q = question.trim();
-      if (!q) {
-        setDecodePacket(null);
-        setDecodeError("当前输入为空：请先填写问题文本。");
-        return;
-      }
-      const passive = collectPassiveObservables();
-      setDecodePacket({
-        logic: llmLogic,
-        payload: {
-          input: {
-            question: q,
-            nickname: nickname.trim() ? nickname.trim() : undefined,
-            datetimeISO: datetime.toISOString(),
-          },
-          obs: {
-            passive,
-            enhanced: enhancedRef.current,
-          },
-          model: m,
-          dashboard,
-        },
-      });
-      setDecodeError(null);
-      return;
-    }
-  }, [activeTab, dashboard, datetime, decodeHistoryPickId, decodeMode, directSource, enhanced, lastHistoryId, llmLogic, nickname, question]);
+  }, [activeTab, dashboard, decodeHistoryPickId, decodeMode, directSource, enhanced, lastHistoryId]);
 
   useEffect(() => {
     try {
@@ -1574,6 +1590,85 @@ export default function CyberGuaApp() {
     decodePendingRef.current.r = "";
     if (a) setDecodeAnswer((prev) => prev + a);
     if (r) setDecodeReasoning((prev) => prev + r);
+  }, []);
+
+  const onCyberStop = () => {
+    cyberAbortRef.current?.abort();
+    cyberAbortRef.current = null;
+    if (cyberPendingRef.current.raf) cancelAnimationFrame(cyberPendingRef.current.raf);
+    cyberPendingRef.current.raf = 0;
+    if (cyberPendingRef.current.timer) clearTimeout(cyberPendingRef.current.timer);
+    cyberPendingRef.current.timer = 0;
+    const a = cyberPendingRef.current.a;
+    const r = cyberPendingRef.current.r;
+    cyberPendingRef.current.a = "";
+    cyberPendingRef.current.r = "";
+    if (a) setCyberAnswer((prev) => prev + a);
+    if (r) setCyberReasoning((prev) => prev + r);
+    setCyberStreaming(false);
+  };
+
+  const scheduleCyberFlush = useCallback(() => {
+    if (cyberPendingRef.current.raf) return;
+    cyberPendingRef.current.raf = requestAnimationFrame(() => {
+      cyberPendingRef.current.raf = 0;
+      const a = cyberPendingRef.current.a;
+      const r = cyberPendingRef.current.r;
+      cyberPendingRef.current.a = "";
+      cyberPendingRef.current.r = "";
+      if (a) setCyberAnswer((prev) => prev + a);
+      if (r) setCyberReasoning((prev) => prev + r);
+    });
+    if (!cyberPendingRef.current.timer) {
+      cyberPendingRef.current.timer = window.setTimeout(() => {
+        cyberPendingRef.current.timer = 0;
+        if (cyberPendingRef.current.raf) cancelAnimationFrame(cyberPendingRef.current.raf);
+        cyberPendingRef.current.raf = 0;
+        const a = cyberPendingRef.current.a;
+        const r = cyberPendingRef.current.r;
+        cyberPendingRef.current.a = "";
+        cyberPendingRef.current.r = "";
+        if (a) setCyberAnswer((prev) => prev + a);
+        if (r) setCyberReasoning((prev) => prev + r);
+      }, 200);
+    }
+  }, []);
+
+  const pushCyberChunk = useCallback(
+    (kind: "c" | "r", delta: string) => {
+      if (!delta) return;
+      if (kind === "c") cyberPendingRef.current.a += delta;
+      else cyberPendingRef.current.r += delta;
+      scheduleCyberFlush();
+    },
+    [scheduleCyberFlush],
+  );
+
+  const scrollCyberToBottom = useCallback(() => {
+    const node = cyberOutRef.current;
+    if (!node) return;
+    cyberOutProgrammatic.current = true;
+    node.scrollTop = node.scrollHeight;
+  }, []);
+
+  const scrollCyberReasonToBottom = useCallback(() => {
+    const node = cyberReasonRef.current;
+    if (!node) return;
+    cyberReasonProgrammatic.current = true;
+    node.scrollTop = node.scrollHeight;
+  }, []);
+
+  const flushCyberPendingNow = useCallback(() => {
+    if (cyberPendingRef.current.raf) cancelAnimationFrame(cyberPendingRef.current.raf);
+    cyberPendingRef.current.raf = 0;
+    if (cyberPendingRef.current.timer) clearTimeout(cyberPendingRef.current.timer);
+    cyberPendingRef.current.timer = 0;
+    const a = cyberPendingRef.current.a;
+    const r = cyberPendingRef.current.r;
+    cyberPendingRef.current.a = "";
+    cyberPendingRef.current.r = "";
+    if (a) setCyberAnswer((prev) => prev + a);
+    if (r) setCyberReasoning((prev) => prev + r);
   }, []);
 
   const onDecodeStart = useCallback(async () => {
@@ -1728,20 +1823,264 @@ export default function CyberGuaApp() {
     setDecodeAiHistoryPersist,
   ]);
 
-  useEffect(() => {
-    if (!decodeAutoStartRef.current) return;
-    if (activeTab !== "decode") return;
-    if (decodeStreaming) return;
-    if (decodeMode !== "llm_direct") return;
-    if (!decodePacket) return;
-    decodeAutoStartRef.current = false;
-    void onDecodeStart();
-  }, [activeTab, decodeMode, decodePacket, decodeStreaming, onDecodeStart]);
+  const onCyberStart = useCallback(async (inputRaw: CyberUserInputV1) => {
+    if (cyberStreaming) return;
 
-  useEffect(() => {
-    if (decodeMode !== "llm_direct") return;
-    if (directSource !== "current") setDirectSource("current");
-  }, [decodeMode, directSource]);
+    cyberReasoningManualRef.current = false;
+    cyberAutoCollapseArmedRef.current = Boolean(decodeThinkingEnabled);
+
+    const createdAt = Date.now();
+    const perfStart = performance.now();
+    const exchangeId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `D${hex8(mix32(randU32(), createdAt >>> 0))}`;
+
+    const passive = collectPassiveObservables();
+    const m = modelRef.current;
+    const geo = enhanced.lastGeo ? { ...enhanced.lastGeo } : null;
+
+    const input: CyberUserInputV1 = {
+      gender: inputRaw.gender || "",
+      calendar: inputRaw.calendar || "",
+      birthDate: (inputRaw.birthDate || "").trim(),
+      birthTime: (inputRaw.birthTime || "").trim(),
+      birthPlaceText: (inputRaw.birthPlaceText || "").trim(),
+      longitude: (inputRaw.longitude || "").trim(),
+    };
+
+    const anchorDate = new Date(createdAt);
+    const anchorUtcISO = anchorDate.toISOString();
+    const anchorLocalDatetime = toDatetimeLocalValue(anchorDate);
+    const utcOffsetMinutes = -anchorDate.getTimezoneOffset();
+    const utcOffsetHours = utcOffsetMinutes / 60;
+    const timezoneName = (() => {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
+      } catch {
+        return "unknown";
+      }
+    })();
+
+    const standardMeridianDeg = utcOffsetHours * 15;
+    const userLon = parseLongitudeDeg(input.longitude);
+    const geoLon = geo && Number.isFinite(geo.lon) ? Number(geo.lon) : null;
+    const longitudeUsed = userLon ?? geoLon ?? standardMeridianDeg;
+    const longitudeSource = userLon !== null ? "user" : geoLon !== null ? "geo" : "derived";
+    const longitudeConfidence = userLon !== null ? "high" : geoLon !== null ? "mid" : "low";
+
+    const eotAnchor = equationOfTimeMinutes(anchorDate);
+    const solarTimeOffsetAnchorMinutes = (longitudeUsed - standardMeridianDeg) * 4 + eotAnchor;
+    const trueSolarAnchorMs = createdAt + Math.round(solarTimeOffsetAnchorMinutes * 60000);
+    const trueSolarAnchorDate = new Date(trueSolarAnchorMs);
+
+    const birthProvided = Boolean(input.birthDate && input.birthTime);
+    const birthLocalValue = birthProvided ? `${input.birthDate}T${input.birthTime}` : toDatetimeLocalValue(trueSolarAnchorDate);
+    const birthLocalDate = parseDatetimeLocalValue(birthLocalValue);
+    const birthMs = birthLocalDate.getTime();
+    const eotBirth = equationOfTimeMinutes(birthLocalDate);
+    const solarTimeOffsetBirthMinutes = (longitudeUsed - standardMeridianDeg) * 4 + eotBirth;
+    const trueSolarBirthMs = birthMs + Math.round(solarTimeOffsetBirthMinutes * 60000);
+    const trueSolarBirthDate = new Date(trueSolarBirthMs);
+    const lunar = Lunar.fromDate(trueSolarBirthDate) as unknown as Record<string, unknown>;
+    const pillars = {
+      year: String((lunar as unknown as { getYearInGanZhiExact?: () => unknown }).getYearInGanZhiExact?.() ?? (lunar as { getYearInGanZhi: () => unknown }).getYearInGanZhi()),
+      month: String(
+        (lunar as unknown as { getMonthInGanZhiExact?: () => unknown }).getMonthInGanZhiExact?.() ??
+          (lunar as { getMonthInGanZhi: () => unknown }).getMonthInGanZhi(),
+      ),
+      day: String(
+        (lunar as unknown as { getDayInGanZhiExact2?: () => unknown }).getDayInGanZhiExact2?.() ?? (lunar as { getDayInGanZhi: () => unknown }).getDayInGanZhi(),
+      ),
+      time: String((lunar as { getTimeInGanZhi: () => unknown }).getTimeInGanZhi()),
+    };
+
+    const cyberProfile = {
+      v: 1,
+      anchor: {
+        createdAtMs: createdAt,
+        utcISO: anchorUtcISO,
+        localDatetime: anchorLocalDatetime,
+        timezoneName,
+        utcOffsetMinutes,
+      },
+      userInput: input,
+      deviceSignals: {
+        passive,
+        geo,
+      },
+      derived: {
+        standardMeridianDeg,
+        longitudeUsed,
+        longitudeSource,
+        equationOfTimeMinutes: eotAnchor,
+        solarTimeOffsetMinutes: solarTimeOffsetAnchorMinutes,
+        trueSolarAnchor: {
+          utcISO: trueSolarAnchorDate.toISOString(),
+          localDatetime: toDatetimeLocalValue(trueSolarAnchorDate),
+        },
+        birth: {
+          provided: birthProvided,
+          localDatetime: birthProvided ? birthLocalValue : null,
+          equationOfTimeMinutes: eotBirth,
+          solarTimeOffsetMinutes: solarTimeOffsetBirthMinutes,
+          trueSolarBirth: {
+            utcISO: trueSolarBirthDate.toISOString(),
+            localDatetime: toDatetimeLocalValue(trueSolarBirthDate),
+          },
+          pillars,
+        },
+      },
+      provenance: {
+        longitudeUsed: {
+          source: longitudeSource,
+          confidence: longitudeConfidence,
+          evidence:
+            longitudeSource === "user"
+              ? ["userInput.longitude"]
+              : longitudeSource === "geo"
+                ? ["deviceSignals.geo.lon"]
+                : ["anchor.utcOffsetMinutes", "derived.standardMeridianDeg"],
+        },
+        standardMeridianDeg: { source: "derived", confidence: "high", evidence: ["anchor.utcOffsetMinutes"] },
+        equationOfTimeMinutes: { source: "derived", confidence: "mid", evidence: ["anchor.utcISO"] },
+        solarTimeOffsetMinutes: {
+          source: "derived",
+          confidence: longitudeConfidence,
+          evidence: ["derived.longitudeUsed", "derived.standardMeridianDeg", "derived.equationOfTimeMinutes"],
+        },
+        trueSolarAnchor: { source: "derived", confidence: longitudeConfidence, evidence: ["derived.solarTimeOffsetMinutes", "anchor.localDatetime"] },
+        birthBasis: {
+          source: birthProvided ? "user" : "derived",
+          confidence: birthProvided ? "mid" : longitudeConfidence,
+          evidence: birthProvided ? ["userInput.birthDate", "userInput.birthTime"] : ["derived.trueSolarAnchor.localDatetime"],
+        },
+        trueSolarBirth: {
+          source: "derived",
+          confidence: longitudeConfidence,
+          evidence: ["derived.birth.solarTimeOffsetMinutes", birthProvided ? "derived.birth.localDatetime" : "derived.trueSolarAnchor.localDatetime"],
+        },
+        pillars: {
+          source: "derived",
+          confidence: birthProvided ? "mid" : longitudeConfidence,
+          evidence: ["derived.birth.trueSolarBirth.localDatetime"],
+        },
+      },
+    };
+
+    const context = {
+      v: 1,
+      meta: { createdAt },
+      cyberProfile,
+      model: m,
+      dashboard,
+      enhanced,
+      obs: { passive },
+    };
+
+    setCyberLastContext(context);
+
+    const historySeed: DecodeAiHistoryItemV1 = {
+      v: 1,
+      id: exchangeId,
+      createdAt,
+      mode: "cyber",
+      directSource: "current",
+      historyPickId: null,
+      options: { model: decodeModel, stream: decodeStreamEnabled, thinking: decodeThinkingEnabled },
+      context: { k: "snapshot", snapshot: context },
+      summary: {
+        question: "赛博算卦",
+        nickname: "",
+        datetimeISO: new Date(createdAt).toISOString(),
+        score: 0,
+        omega: "—",
+        signature: "—",
+      },
+      response: {
+        answer: "",
+        reasoning: "",
+        error: null,
+        aborted: false,
+        finishedAt: null,
+        durationMs: null,
+      },
+    };
+    setDecodeAiHistoryPersist([historySeed, ...decodeAiHistoryRef.current].slice(0, 80));
+
+    setCyberError(null);
+    setCyberAnswer("");
+    setCyberReasoning("");
+    setCyberReasoningOpen(Boolean(decodeThinkingEnabled));
+    setCyberStreaming(true);
+    const ctrl = new AbortController();
+    cyberAbortRef.current = ctrl;
+
+    let accAnswer = "";
+    let accReasoning = "";
+    let errorMessage: string | null = null;
+    let aborted = false;
+    try {
+      await streamDecode({
+        mode: "cyber",
+        context,
+        options: {
+          model: decodeModel,
+          stream: decodeStreamEnabled,
+          thinking: decodeThinkingEnabled,
+        },
+        signal: ctrl.signal,
+        onContent: (d) => {
+          accAnswer += d;
+          if (cyberAutoCollapseArmedRef.current && !cyberReasoningManualRef.current) {
+            cyberAutoCollapseArmedRef.current = false;
+            if (cyberReasoningOpenRef.current) setCyberReasoningOpen(false);
+          }
+          pushCyberChunk("c", d);
+        },
+        onReasoning: (d) => {
+          accReasoning += d;
+          pushCyberChunk("r", d);
+        },
+      });
+      flushCyberPendingNow();
+    } catch (e) {
+      aborted = (e as { name?: string }).name === "AbortError";
+      if (!aborted) {
+        errorMessage = e instanceof Error ? e.message : "算卦失败。";
+        setCyberError(errorMessage);
+      }
+    } finally {
+      flushCyberPendingNow();
+      const finishedAt = Date.now();
+      const durationMs = Math.round(Math.max(0, performance.now() - perfStart));
+      const next = decodeAiHistoryRef.current.map((x) => {
+        if (x.id !== exchangeId) return x;
+        return {
+          ...x,
+          response: {
+            answer: accAnswer,
+            reasoning: accReasoning,
+            error: errorMessage,
+            aborted,
+            finishedAt,
+            durationMs,
+          },
+        } satisfies DecodeAiHistoryItemV1;
+      });
+      setDecodeAiHistoryPersist(next);
+      setCyberStreaming(false);
+      cyberAbortRef.current = null;
+    }
+  }, [
+    cyberStreaming,
+    dashboard,
+    decodeModel,
+    decodeStreamEnabled,
+    decodeThinkingEnabled,
+    enhanced,
+    flushCyberPendingNow,
+    pushCyberChunk,
+    setDecodeAiHistoryPersist,
+  ]);
 
   useEffect(() => {
     const node = decodeOutRef.current;
@@ -1761,17 +2100,51 @@ export default function CyberGuaApp() {
   }, [decodeAuto, decodeReasoning, decodeReasoningOpen, decodeStreaming, scrollReasonToBottom]);
 
   useEffect(() => {
+    const node = cyberOutRef.current;
+    if (!node) return;
+    if (!cyberAuto) return;
+    if (!cyberStreaming && !cyberAnswer) return;
+    scrollCyberToBottom();
+  }, [cyberAnswer, cyberAuto, cyberStreaming, scrollCyberToBottom]);
+
+  useEffect(() => {
+    const node = cyberReasonRef.current;
+    if (!node) return;
+    if (!cyberAuto) return;
+    if (!cyberReasoningOpen) return;
+    if (!cyberStreaming && !cyberReasoning) return;
+    scrollCyberReasonToBottom();
+  }, [cyberAuto, cyberReasoning, cyberReasoningOpen, cyberStreaming, scrollCyberReasonToBottom]);
+
+  useEffect(() => {
     const handler = () => {
-      if (activeTab !== "decode") return;
       flushDecodePendingNow();
-      if (decodeAuto) {
+      flushCyberPendingNow();
+      if (activeTab === "decode" && decodeAuto) {
         scrollDecodeToBottom();
         if (decodeReasoningOpen) scrollReasonToBottom();
+      }
+      if (isCyber && cyberAuto) {
+        scrollCyberToBottom();
+        if (cyberReasoningOpen) scrollCyberReasonToBottom();
       }
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [activeTab, decodeAuto, decodeReasoningOpen, flushDecodePendingNow, scrollDecodeToBottom, scrollReasonToBottom]);
+  }, [
+    activeTab,
+    cyberAuto,
+    cyberReasoningOpen,
+    decodeAuto,
+    decodeReasoningOpen,
+    flushCyberPendingNow,
+    flushDecodePendingNow,
+    isCyber,
+    scrollCyberReasonToBottom,
+    scrollCyberToBottom,
+    scrollDecodeToBottom,
+    scrollReasonToBottom,
+  ]);
 
   const decodeAnswerMarkdown = useMemo(() => {
     const t = decodeAnswer || "";
@@ -1784,20 +2157,35 @@ export default function CyberGuaApp() {
     return `> ${t.replace(/\n/g, "\n> ")}`;
   }, [decodeReasoning]);
 
+  const cyberAnswerMarkdown = useMemo(() => {
+    const t = cyberAnswer || "";
+    return normalizeMarkdownLatexEscapes(unwrapOuterMarkdownFence(t));
+  }, [cyberAnswer]);
+
+  const cyberReasoningMarkdown = useMemo(() => {
+    const t = cyberReasoning || "";
+    if (!t.trim()) return "";
+    return `> ${t.replace(/\n/g, "\n> ")}`;
+  }, [cyberReasoning]);
+
   const decodeHistoryDetail = useMemo(() => {
     if (!decodeHistoryDetailId) return null;
     return decodeAiHistory.find((x) => x.id === decodeHistoryDetailId) ?? null;
   }, [decodeAiHistory, decodeHistoryDetailId]);
 
+  const cyberShareSummary = useMemo(() => {
+    return { score: 0, sig: "—", omega: "—", questionText: "赛博算卦", runCount: model?.runCount ?? null };
+  }, [model?.runCount]);
+
   const shareCard = useShareCard({
-    decodeMode,
-    decodePacket,
-    directSource,
+    decodeMode: isCyber ? "cyber" : decodeMode,
+    decodePacket: isCyber ? cyberLastContext : decodePacket,
+    directSource: isCyber ? "current" : directSource,
     question,
     history,
     modelRef,
-    decodeAnswerMarkdown,
-    decodeSummary,
+    decodeAnswerMarkdown: isCyber ? cyberAnswerMarkdown : decodeAnswerMarkdown,
+    decodeSummary: isCyber ? cyberShareSummary : decodeSummary,
   });
 
   const decodeHistoryDetailContext = useMemo(() => {
@@ -1908,275 +2296,236 @@ export default function CyberGuaApp() {
                 onClick={() => setModelBoardOpen(true)}
               />
             </Box>
-          </Stack>
 
-          <Stack gap={8} className="gua-phase">
-            <Group justify="space-between" className="gua-phase-labels">
-              {phases.map((p, index) => {
-                return (
-                  <UnstyledButton
-                    key={p.label}
-                    className="gua-phase-tab"
-                    onClick={() => {
-                      if (!p.enabled) return;
-                      setActiveTab(p.value);
-                    }}
-                    aria-current={activeTab === p.value ? "page" : undefined}
-                  >
-                    <Text fz="xs" className={index === phaseIndex ? "gua-phase-active" : "gua-phase-idle"}>
-                      {p.label}
-                    </Text>
-                  </UnstyledButton>
-                );
-              })}
-            </Group>
-            <Box className="gua-stepper">
-              {phases.map((p, index) => {
-                return (
-                  <UnstyledButton
-                    key={p.label}
-                    className="gua-phase-tab"
-                    onClick={() => {
-                      if (!p.enabled) return;
-                      setActiveTab(p.value);
-                    }}
-                  >
-                    <Box className={index === phaseIndex ? "gua-step gua-step-active" : "gua-step"} />
-                  </UnstyledButton>
-                );
-              })}
+            <Box style={{ width: "100%", display: "flex", justifyContent: "center" }}>
+              <SegmentedControl
+                value={feature}
+                onChange={(v) => setFeature(v as "ai" | "cyber")}
+                data={[
+                  { value: "ai", label: "AI推演" },
+                  { value: "cyber", label: "赛博算卦" },
+                ]}
+                radius="xl"
+              />
             </Box>
-            <Text fz="xs" className="gua-phase-current">
-              当前页面 · {phases[phaseIndex]?.label ?? "输入"}
+
+            <Text fz="xs" c="dimmed" ta="center">
+              {isCyber
+                ? "可选补充信息；缺失字段将用本机参数补全。以起卦时刻做真太阳时校正，输出推断过程与证据链。"
+                : "基于你的问题与本机观测离线推演，再由 AI 做结构化解读与建议。"}
             </Text>
+            <Box style={{ width: "100%", display: "flex", justifyContent: "center" }}>
+              <ConfigBar
+                onOpenAiConfig={() => setAiConfigOpen(true)}
+                onOpenDivinationHistory={() => setDivinationHistoryOpen(true)}
+                onOpenDecodeHistory={() => setDecodeHistoryOpen(true)}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onOpenShareCard={shareCard.open}
+              />
+            </Box>
           </Stack>
 
-          <Group justify="space-between" align="center" className="gua-controls">
-            <Group gap="xs">
-              <ActionIcon variant="subtle" color="gray" radius="xl" aria-label="AI 配置" onClick={() => setAiConfigOpen(true)}>
-                <Text fw={700} fz="xs">
-                  AI
-                </Text>
-              </ActionIcon>
-              <ActionIcon
-                variant="subtle"
-                color="gray"
-                radius="xl"
-                aria-label="推演历史"
-                onClick={() => setDivinationHistoryOpen(true)}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M12 8v4.6l3 1.8"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10Z"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </ActionIcon>
-              <ActionIcon
-                variant="subtle"
-                color="gray"
-                radius="xl"
-                aria-label="解码历史"
-                onClick={() => setDecodeHistoryOpen(true)}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M8.2 8.6 5.4 12l2.8 3.4"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M15.8 8.6 18.6 12l-2.8 3.4"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M10.6 18.2 13.4 5.8"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </ActionIcon>
-              <ActionIcon
-                variant="subtle"
-                color="gray"
-                radius="xl"
-                aria-label="设置"
-                onClick={() => setSettingsOpen(true)}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M19.4 13.6c.1-.5.1-1 .1-1.6s0-1.1-.1-1.6l2-1.5-2-3.4-2.4 1a8.6 8.6 0 0 0-2.7-1.6L14 2h-4l-.3 2.3c-1 .3-2 .9-2.7 1.6l-2.4-1-2 3.4 2 1.5c-.1.5-.1 1-.1 1.6s0 1.1.1 1.6l-2 1.5 2 3.4 2.4-1c.7.7 1.7 1.2 2.7 1.6L10 22h4l.3-2.3c1-.3 2-.9 2.7-1.6l2.4 1 2-3.4-2-1.5Z"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </ActionIcon>
-              <Button radius="xl" variant="default" onClick={onReset}>
-                重置
-              </Button>
-              <Button radius="xl" variant="default" onClick={onTerminate} disabled={!isRunning}>
-                终止
-              </Button>
-              <Button radius="xl" variant="default" onClick={shareCard.open}>
-                分享卡片
-              </Button>
-            </Group>
-            <Group gap="xs">
-              {activeTab === "input" ? (
-                <Button
-                  radius="xl"
-                  variant="default"
-                  disabled={!canStart}
-                  onClick={() => {
-                    const q = question.trim();
-                    if (!q) {
-                      setError("目标/问题不可为空。");
-                      return;
-                    }
-                    setError(null);
-                    decodeAutoStartRef.current = true;
-                    setDecodeMode("llm_direct");
-                    setDirectSource("current");
-                    setActiveTab("decode");
-                  }}
-                >
-                  AI推演
-                </Button>
-              ) : null}
-              <Button radius="xl" onClick={onStart} disabled={!canStart}>
-                {runPhase === "input" && trace.length === 0 && !result ? "开始推演" : "再推演一次"}
-              </Button>
-            </Group>
-          </Group>
-
-          <InputTabSection
-            active={activeTab === "input"}
-            question={question}
-            setQuestion={(next) => setQuestion(next)}
-            datetimeValue={datetimeValue}
-            setDatetimeValue={(next) => setDatetimeValue(next)}
-            nickname={nickname}
-            setNickname={(next) => setNickname(next)}
-            shortcutHint={shortcutHint}
-            canStart={canStart}
-            onStart={onStart}
-            modelRunCount={model?.runCount ?? null}
-            error={error}
-          />
-
-          <ComputingTabSection
-            active={activeTab === "computing"}
-            hasData={trace.length > 0 || isRunning || formulaSeed !== null}
-            traceLength={trace.length}
-            traceVisible={traceVisible}
-            progressPct={progressPct}
-            isRunning={isRunning}
-            computeSpeedMul={computeSpeedMul}
-            onSpeedUp={() => {
-              setComputeSpeedMul((prev) => {
-                const next = Math.min(16, prev * 2);
-                const resolved = Number.isFinite(next) ? next : prev;
-                computeSpeedMulRef.current = resolved;
-                return resolved;
-              });
-            }}
-            onGoInput={() => setActiveTab("input")}
-            formulaMarkdown={formulaMarkdown}
-            progressiveParams={progressiveParams}
-            scienceMarkdown={scienceMarkdown}
-            lunarMarkdown={lunarMarkdown}
-          />
-
-          <ResultTabSection
-            active={activeTab === "result"}
-            result={result}
-            runPhase={runPhase}
-            resultMarkdown={resultMarkdown}
-            isRunning={isRunning}
-            traceLength={trace.length}
-            lastHistoryId={lastHistoryId}
-            lastHistoryIdRef={lastHistoryIdRef}
-            onDecodeClick={() => {
-              setDecodeMode("result_current");
-              setDirectSource("current");
-              setActiveTab("decode");
-            }}
-            onDislike={onDislike}
-            onLike={onLike}
-            feedbackLocked={feedbackLocked}
-            model={model}
-            setActiveTab={setActiveTab}
-          />
-
-          {activeTab === "decode" ? (
+          {isCyber ? (
             <DecodeTabContent
-              decodeMode={decodeMode}
-              setDecodeMode={setDecodeMode}
-              directSource={directSource}
-              setDirectSource={setDirectSource}
-              decodeHistoryPickId={decodeHistoryPickId}
-              setDecodeHistoryPickId={setDecodeHistoryPickId}
+              decodeMode={"cyber"}
+              setDecodeMode={() => void 0}
+              modeOptions={[{ value: "cyber", label: "算卦" }]}
+              showPromptPanel={false}
+              startLabel="开始算卦"
+              outputTitle="算卦输出"
+              emptyOutputText="点击「开始算卦」→ 选择是否补充信息。系统会用起卦时刻做真太阳时校正，补全字段并输出完整推断过程与证据链。"
+              streamingOutputText="正在算卦…"
+              directSource={"current"}
+              setDirectSource={() => void 0}
+              decodeHistoryPickId={null}
+              setDecodeHistoryPickId={() => void 0}
               history={history}
-              onBack={() => setActiveTab(result && runPhase === "result" ? "result" : "input")}
-              summaryText={
-                decodeMode === "model_current"
-                  ? `runCount=${decodeSummary?.runCount ?? (model?.runCount ?? 0)}`
-                  : decodeSummary?.questionText
-                    ? decodeSummary.questionText
-                    : decodeMode === "llm_direct" && directSource === "current"
-                      ? question.trim() || "（当前输入为空）"
-                      : "—"
-              }
-              decodeError={decodeError}
-              decodeAuto={decodeAuto}
-              setDecodeAuto={setDecodeAuto}
+              onBack={() => void 0}
+              summaryText={cyberStreaming ? "进行中…" : cyberLastContext ? "已生成" : "字段补全 · 真太阳时校正 · 证据链推断"}
+              decodeError={cyberError}
+              decodeAuto={cyberAuto}
+              setDecodeAuto={setCyberAuto}
               decodeThinkingEnabled={decodeThinkingEnabled}
-              decodeReasoning={decodeReasoning}
-              decodeReasoningOpen={decodeReasoningOpen}
-              setDecodeReasoningOpen={setDecodeReasoningOpen}
-              decodeStreaming={decodeStreaming}
-              decodePacket={decodePacket}
-              onDecodeStart={onDecodeStart}
-              onDecodeStop={onDecodeStop}
-              decodeAnswerMarkdown={decodeAnswerMarkdown}
-              decodeReasoningMarkdown={decodeReasoningMarkdown}
-              decodeOutRef={decodeOutRef}
-              decodeReasonRef={decodeReasonRef}
-              decodeOutProgrammatic={decodeOutProgrammatic}
-              decodeReasonProgrammatic={decodeReasonProgrammatic}
-              decodeReasoningManualRef={decodeReasoningManualRef}
-              decodeAutoCollapseArmedRef={decodeAutoCollapseArmedRef}
+              decodeReasoning={cyberReasoning}
+              decodeReasoningOpen={cyberReasoningOpen}
+              setDecodeReasoningOpen={setCyberReasoningOpen}
+              decodeStreaming={cyberStreaming}
+              decodePacket={cyberLastContext ?? ({ v: 1 } as unknown)}
+              onDecodeStart={() => setCyberStartOpen(true)}
+              onDecodeStop={onCyberStop}
+              decodeAnswerMarkdown={cyberAnswerMarkdown}
+              decodeReasoningMarkdown={cyberReasoningMarkdown}
+              decodeOutRef={cyberOutRef}
+              decodeReasonRef={cyberReasonRef}
+              decodeOutProgrammatic={cyberOutProgrammatic}
+              decodeReasonProgrammatic={cyberReasonProgrammatic}
+              decodeReasoningManualRef={cyberReasoningManualRef}
+              decodeAutoCollapseArmedRef={cyberAutoCollapseArmedRef}
               isNearBottom={isNearBottom}
-              scrollDecodeToBottom={scrollDecodeToBottom}
-              scrollReasonToBottom={scrollReasonToBottom}
+              scrollDecodeToBottom={scrollCyberToBottom}
+              scrollReasonToBottom={scrollCyberReasonToBottom}
             />
-          ) : null}
+          ) : (
+            <>
+              <Stack gap={8} className="gua-phase">
+                <Group justify="space-between" className="gua-phase-labels">
+                  {phases.map((p, index) => {
+                    return (
+                      <UnstyledButton
+                        key={p.label}
+                        className="gua-phase-tab"
+                        onClick={() => {
+                          if (!p.enabled) return;
+                          setActiveTab(p.value);
+                        }}
+                        aria-current={activeTab === p.value ? "page" : undefined}
+                      >
+                        <Text fz="xs" className={index === phaseIndex ? "gua-phase-active" : "gua-phase-idle"}>
+                          {p.label}
+                        </Text>
+                      </UnstyledButton>
+                    );
+                  })}
+                </Group>
+                <Box className="gua-stepper">
+                  {phases.map((p, index) => {
+                    return (
+                      <UnstyledButton
+                        key={p.label}
+                        className="gua-phase-tab"
+                        onClick={() => {
+                          if (!p.enabled) return;
+                          setActiveTab(p.value);
+                        }}
+                      >
+                        <Box className={index === phaseIndex ? "gua-step gua-step-active" : "gua-step"} />
+                      </UnstyledButton>
+                    );
+                  })}
+                </Box>
+                <Text fz="xs" className="gua-phase-current">
+                  当前页面 · {phases[phaseIndex]?.label ?? "输入"}
+                </Text>
+              </Stack>
+
+              <Group justify="space-between" align="center" className="gua-controls">
+                <Group gap="xs" wrap="wrap">
+                  <Button radius="xl" variant="default" onClick={onReset}>
+                    重置
+                  </Button>
+                  <Button radius="xl" variant="default" onClick={onTerminate} disabled={!isRunning}>
+                    终止
+                  </Button>
+                </Group>
+                <Group gap="xs">
+                  <Button radius="xl" onClick={onStart} disabled={!canStart}>
+                    {runPhase === "input" && trace.length === 0 && !result ? "开始推演" : "再推演一次"}
+                  </Button>
+                </Group>
+              </Group>
+
+              <InputTabSection
+                active={activeTab === "input"}
+                question={question}
+                setQuestion={(next) => setQuestion(next)}
+                datetimeValue={datetimeValue}
+                setDatetimeValue={(next) => setDatetimeValue(next)}
+                nickname={nickname}
+                setNickname={(next) => setNickname(next)}
+                shortcutHint={shortcutHint}
+                canStart={canStart}
+                onStart={onStart}
+                modelRunCount={model?.runCount ?? null}
+                error={error}
+              />
+
+              <ComputingTabSection
+                active={activeTab === "computing"}
+                hasData={trace.length > 0 || isRunning || formulaSeed !== null}
+                traceLength={trace.length}
+                traceVisible={traceVisible}
+                progressPct={progressPct}
+                isRunning={isRunning}
+                computeSpeedMul={computeSpeedMul}
+                onSpeedUp={() => {
+                  setComputeSpeedMul((prev) => {
+                    const next = Math.min(16, prev * 2);
+                    const resolved = Number.isFinite(next) ? next : prev;
+                    computeSpeedMulRef.current = resolved;
+                    return resolved;
+                  });
+                }}
+                onGoInput={() => setActiveTab("input")}
+                formulaMarkdown={formulaMarkdown}
+                progressiveParams={progressiveParams}
+                scienceMarkdown={scienceMarkdown}
+                lunarMarkdown={lunarMarkdown}
+              />
+
+              <ResultTabSection
+                active={activeTab === "result"}
+                result={result}
+                runPhase={runPhase}
+                resultMarkdown={resultMarkdown}
+                isRunning={isRunning}
+                traceLength={trace.length}
+                lastHistoryId={lastHistoryId}
+                lastHistoryIdRef={lastHistoryIdRef}
+                onDecodeClick={() => {
+                  setDecodeMode("result_current");
+                  setDirectSource("current");
+                  setActiveTab("decode");
+                }}
+                onDislike={onDislike}
+                onLike={onLike}
+                feedbackLocked={feedbackLocked}
+                model={model}
+                setActiveTab={setActiveTab}
+              />
+
+              {activeTab === "decode" ? (
+                <DecodeTabContent
+                  decodeMode={decodeMode}
+                  setDecodeMode={setDecodeMode}
+                  directSource={directSource}
+                  setDirectSource={setDirectSource}
+                  decodeHistoryPickId={decodeHistoryPickId}
+                  setDecodeHistoryPickId={setDecodeHistoryPickId}
+                  history={history}
+                  onBack={() => setActiveTab(result && runPhase === "result" ? "result" : "input")}
+                  summaryText={
+                    decodeMode === "model_current"
+                      ? `runCount=${decodeSummary?.runCount ?? (model?.runCount ?? 0)}`
+                      : decodeSummary?.questionText
+                        ? decodeSummary.questionText
+                        : "—"
+                  }
+                  decodeError={decodeError}
+                  decodeAuto={decodeAuto}
+                  setDecodeAuto={setDecodeAuto}
+                  decodeThinkingEnabled={decodeThinkingEnabled}
+                  decodeReasoning={decodeReasoning}
+                  decodeReasoningOpen={decodeReasoningOpen}
+                  setDecodeReasoningOpen={setDecodeReasoningOpen}
+                  decodeStreaming={decodeStreaming}
+                  decodePacket={decodePacket}
+                  onDecodeStart={onDecodeStart}
+                  onDecodeStop={onDecodeStop}
+                  decodeAnswerMarkdown={decodeAnswerMarkdown}
+                  decodeReasoningMarkdown={decodeReasoningMarkdown}
+                  decodeOutRef={decodeOutRef}
+                  decodeReasonRef={decodeReasonRef}
+                  decodeOutProgrammatic={decodeOutProgrammatic}
+                  decodeReasonProgrammatic={decodeReasonProgrammatic}
+                  decodeReasoningManualRef={decodeReasoningManualRef}
+                  decodeAutoCollapseArmedRef={decodeAutoCollapseArmedRef}
+                  isNearBottom={isNearBottom}
+                  scrollDecodeToBottom={scrollDecodeToBottom}
+                  scrollReasonToBottom={scrollReasonToBottom}
+                />
+              ) : null}
+            </>
+          )}
 
         </Stack>
       </Container>
@@ -2219,6 +2568,118 @@ export default function CyberGuaApp() {
         </div>
       </footer>
 
+      <Modal
+        opened={cyberStartOpen}
+        onClose={() => setCyberStartOpen(false)}
+        size="lg"
+        centered
+        title="开始算卦"
+      >
+        <Stack gap="md">
+          <Text fz="sm" c="dimmed">
+            你填的字段会覆盖本机推算字段；缺失字段会用设备参数与算法补全，并在输出中标注溯源与可信度。
+          </Text>
+          <SegmentedControl
+            fullWidth
+            radius="xl"
+            value={cyberStartMode}
+            onChange={(v) => setCyberStartMode(v as "fill" | "auto")}
+            data={[
+              { value: "auto", label: "直接算" },
+              { value: "fill", label: "我来填（更准）" },
+            ]}
+          />
+
+          {cyberStartMode === "fill" ? (
+            <Stack gap="md">
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                <SegmentedControl
+                  fullWidth
+                  value={cyberUserInput.gender}
+                  onChange={(v) => setCyberUserInput((prev) => ({ ...prev, gender: v as CyberUserInputV1["gender"] }))}
+                  data={[
+                    { value: "", label: "性别（空）" },
+                    { value: "female", label: "女" },
+                    { value: "male", label: "男" },
+                    { value: "other", label: "其他" },
+                  ]}
+                />
+                <SegmentedControl
+                  fullWidth
+                  value={cyberUserInput.calendar}
+                  onChange={(v) => setCyberUserInput((prev) => ({ ...prev, calendar: v as CyberUserInputV1["calendar"] }))}
+                  data={[
+                    { value: "", label: "历法（空）" },
+                    { value: "solar", label: "公历" },
+                    { value: "lunar", label: "农历" },
+                  ]}
+                />
+              </SimpleGrid>
+
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                <TextInput
+                  label="出生日期（可空）"
+                  type="date"
+                  value={cyberUserInput.birthDate}
+                  onChange={(e) => setCyberUserInput((prev) => ({ ...prev, birthDate: e.currentTarget.value }))}
+                />
+                <TextInput
+                  label="出生时间（可空）"
+                  type="time"
+                  value={cyberUserInput.birthTime}
+                  onChange={(e) => setCyberUserInput((prev) => ({ ...prev, birthTime: e.currentTarget.value }))}
+                />
+              </SimpleGrid>
+
+              <TextInput
+                label="出生地（可空）"
+                placeholder="省市县/城市"
+                value={cyberUserInput.birthPlaceText}
+                onChange={(e) => setCyberUserInput((prev) => ({ ...prev, birthPlaceText: e.currentTarget.value }))}
+                maxLength={60}
+              />
+
+              <TextInput
+                label="经度（可空，-180..180）"
+                placeholder="例如：121.47"
+                type="number"
+                value={cyberUserInput.longitude}
+                onChange={(e) => setCyberUserInput((prev) => ({ ...prev, longitude: e.currentTarget.value }))}
+              />
+            </Stack>
+          ) : null}
+
+          <Group justify="space-between" wrap="wrap">
+            <Button
+              radius="xl"
+              variant="default"
+              onClick={() => {
+                setCyberUserInput(EMPTY_CYBER_USER_INPUT);
+                setCyberStartMode("auto");
+              }}
+            >
+              清空
+            </Button>
+            <Group gap="xs" wrap="wrap" style={{ justifyContent: "flex-end", flex: "1 1 auto" }}>
+              <Button radius="xl" variant="default" onClick={() => setCyberStartOpen(false)}>
+                取消
+              </Button>
+              <Button
+                radius="xl"
+                onClick={() => {
+                  setCyberStartOpen(false);
+                  const payload = cyberStartMode === "auto" ? EMPTY_CYBER_USER_INPUT : cyberUserInput;
+                  void onCyberStart(payload);
+                }}
+                disabled={cyberStreaming}
+              >
+                开始推演
+              </Button>
+            </Group>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Modal opened={modelBoardOpen} onClose={() => setModelBoardOpen(false)} size="xl" centered title="模型看板">
         <Stack gap="md">
           <Box className="gua-float-text">
@@ -2240,7 +2701,23 @@ export default function CyberGuaApp() {
       </Modal>
 
       <Modal opened={aboutOpen} onClose={() => setAboutOpen(false)} size="lg" centered title="算法说明">
-        <MarkdownStream content={ABOUT_ALGORITHM_MARKDOWN} />
+        <Stack gap="sm">
+          <Box style={{ width: "100%", display: "flex", justifyContent: "center" }}>
+            <SegmentedControl
+              value={aboutTab}
+              onChange={(v) => setAboutTab(v as "idea" | "ai" | "cyber")}
+              data={[
+                { value: "idea", label: "设计理念" },
+                { value: "ai", label: "AI推演" },
+                { value: "cyber", label: "赛博算卦" },
+              ]}
+              radius="xl"
+            />
+          </Box>
+          <MarkdownStream
+            content={aboutTab === "idea" ? ABOUT_IDEA_MARKDOWN : aboutTab === "ai" ? ABOUT_AI_MARKDOWN : ABOUT_CYBER_MARKDOWN}
+          />
+        </Stack>
       </Modal>
 
       <SettingsModals

@@ -1,4 +1,4 @@
-export type DecodeMode = "result_current" | "model_current" | "result_history" | "llm_direct";
+export type DecodeMode = "result_current" | "model_current" | "result_history" | "cyber";
 
 const BASE_SYSTEM_PROMPT = [
   "你是“GUA 解码器”。你接收的输入是一次本地推演的结构化打包（JSON）。",
@@ -80,66 +80,69 @@ const MODEL_SYSTEM_PROMPT = [
   "- 解释必须引用输入中的字段名或片段（如 model.runCount/model.theta16/dashboard.thetaStability01/recent[0].question 等），做到“可追溯”。",
 ].join("\n");
 
-const DIRECT_SYSTEM_PROMPT = [
-  "你是 GUA 项目的外部推演者（不运行本机引擎，但必须尊重其设计理念与可溯源约束）。",
-  "你会收到“项目运行逻辑”（文本）与一份原始数据包（JSON）。",
+const CYBER_SYSTEM_PROMPT = [
+  "你是“资深命理预测师（真太阳时专精）”，同时具备现代咨询师的共情力与职业操守。你只做严谨推演，不做恐吓式断语。",
   "",
-  "项目设计理念（必须理解并贯彻）：",
-  "- 这是“个人宇宙常量推演装置”：用输入/观测/交互/模型构造可复现种子，在本地形成会收敛的宇宙常量模型 M。",
-  "- 这是一个沙盒宇宙：输出仅表达“个人宇宙模型”内部的结果与启示。",
+  "你接收的输入是一次“赛博算卦快照”（JSON），包含：",
+  "- cyberProfile：字段清单（用户可选填 + 本机补全）与溯源/可信度，以及真太阳时校正结果与四柱（derived.birth.pillars）。",
+  "- model/dashboard/enhanced/obs：本机宇宙常量模型与观测摘要（用于补充“性格/节律/偏好/风险”证据）。",
   "",
-  "输出结构要求（必须遵守）：",
-  "1) 输出必须是 Markdown 格式（不得输出 JSON/纯文本/其他格式）。",
+  "本质：同一套字段体系。用户没填=全部由本机信息补全；用户填了=覆盖同名字段。你必须把“你用了哪些字段、怎么算出来、为什么这么推断、缺失会如何降低可信度”写清楚，做到有理有据、可追溯、可校验。",
+  "",
+  "职业操守与限制（必须遵守）：",
+  "1) 不预测死亡日期，不对极端负面事件做绝对化定论；不提供违法犯罪建议，不提供博彩投机指导。",
+  "2) 命理仅供参考，重大决策必须结合现实客观情况。强调“命由天定，运由己造”。",
+  "",
+  "输出格式（必须遵守）：",
+  "1) 输出必须是 Markdown（不得输出 JSON/纯文本/其他格式）。",
   "2) 禁止将整个输出包裹在 ``` 或 ```markdown 代码块中。",
-  "3) 输出中必须包含两个清晰分区（建议使用二级标题）：",
-  "   - ## 问题解答",
-  "   - ## 模型启示",
+  "3) 禁止出现 “div / divination / 推演解码 / 解码器” 等术语。",
   "",
-  "两块内容的含义（必须遵守）：",
-  "- ## 问题解答：针对 payload.input.question 的解答，但必须是“通过模型常量参数与数据包推演信息解读出来”的答案；引用字段支撑，而不是泛泛回答。",
-  "- ## 模型启示：跳脱问题框架，由模型与观测/历史/trace 等信号给出启示；可以与 payload.input.question 完全无关，但启示必须与你（用户）有关，必须落到你的状态/倾向/注意点/下一步行动等表达，禁止只讨论模型本身或参数。允许引用字段支撑，但必须翻译成“对你意味着什么”。",
+  "证据链规则（必须遵守）：",
+  "- 任何结论必须至少引用 1 个输入字段路径作为证据（例如 cyberProfile.derived.birth.pillars.day、cyberProfile.provenance.longitudeUsed、dashboard.thetaStability01、obs.passive.timezoneName 等）。",
+  "- 字段缺失就写“缺失”，并说明你改用哪个字段补全（引用 cyberProfile.provenance.*）。严禁编造用户未提供且输入不存在的信息（例如具体出生城市经纬度、具体事件年份）。",
   "",
-  "结论块格式（必须遵守）：",
-  "- 在上述两个分区中，各自必须包含一个“结论小节”，使用三级标题，格式如下：",
-  "### 结论（约100字）",
-  "（在下一行写 80–140 个汉字的总结）",
-  "- 字数要求：每个结论小节约 100 字（80–140 个汉字）。",
+  "真太阳时校正规则（必须遵守）：",
+  "- 你必须在正文中解释并使用以下校正链条（若输入已给出数值，直接引用；不得自行重新发明公式）：",
+  "  - 标准子午线：standardMeridianDeg = utcOffsetHours × 15（对应 cyberProfile.derived.standardMeridianDeg）",
+  "  - 经度选取：longitudeUsed（对应 cyberProfile.derived.longitudeUsed，来源看 cyberProfile.provenance.longitudeUsed）",
+  "  - 均时差：equationOfTimeMinutes（对应 cyberProfile.derived.equationOfTimeMinutes）",
+  "  - 真太阳时偏移：solarTimeOffsetMinutes = (longitudeUsed - standardMeridianDeg) × 4 + equationOfTimeMinutes（对应 cyberProfile.derived.solarTimeOffsetMinutes）",
+  "  - 真太阳时：trueSolarAnchor/trueSolarBirth（对应 cyberProfile.derived.trueSolarAnchor 与 cyberProfile.derived.birth.trueSolarBirth）",
   "",
-  "趋势与能动性（必须遵守）：",
-  "- 推演输出描述的是趋势，可正可负可中性可混合；禁止无证据地总是积极或总是消极。",
-  "- 无论趋势如何，必须承认人的主观能动性：在“结论块”之外给出至少 1 个可执行的主动调整方向（同样要可溯源）。",
+  "推演流程（必须遵守，按顺序输出）：",
+  "## 字段清单与溯源（你给了什么/本机补了什么）",
+  "- 列出并解释关键字段：birth（是否用户提供）、longitudeUsed、utcOffsetMinutes、standardMeridianDeg、equationOfTimeMinutes、solarTimeOffsetMinutes、trueSolarBirth、pillars。",
+  "- 每个字段必须写：值 + source + confidence（引用 cyberProfile.provenance.*）。",
   "",
-  "LaTeX 输出规则（必须遵守）：",
-  "- 当你输出数学公式时，使用 Markdown 的 $...$ 或 $$...$$。",
-  "- 不要对 LaTeX 做 JSON 转义：正确示例：$$\\Omega = \\Phi_{1} + 1$$；错误示例：$$\\\\Omega = \\\\Phi_{1} + 1$$。",
+  "## 校时（真太阳时）",
+  "- 展示校时计算链条与关键数值，并解释“这一步为何影响时柱/推断”。",
   "",
-  "输入约束（必须遵守）：",
-  "- 每个关键判断都要引用字段名或片段（例如 payload.input.question / payload.obs.passive.fp8 / payload.model.theta16）。",
-  "- 任何解读只允许使用输入 JSON 里存在的字段；缺失就写“缺失”。",
+  "## 命局推断步骤（作用关系→结论）",
+  "- 先论原局：以 cyberProfile.derived.birth.pillars 为基石，给出日主视角、旺衰倾向、五行偏颇与调候（可用半文半白术语 + 通俗解释）。",
+  "- 再论运：如果缺少大运起运信息，明确写“无法严算起运岁数/大运表”，但仍可基于本机节律信号（dashboard/model/recent/obs）给出“近期节奏与风险偏好”的推断，并标注这是“补全推断”。",
+  "- 任何推断都必须落在干支作用关系（冲合克刑害、月令、通根、透干、十神意向）或本机信号证据上；禁止模棱两可的空话。",
+  "",
+  "## 结论（约100字）",
+  "（在下一行写 80–140 个汉字总结，不要分点）",
+  "",
+  "## 你可以怎么做",
+  "- 至少 3 条可执行建议（每条 1–2 句）。建议需与前文证据对应，包含可操作的行动/节律调整/取舍策略。",
+  "",
+  "## 可校验点",
+  "- 至少 2 条“可验证的问题/年份线索/自我观察项”，用于让用户反馈以校正时刻与推断可靠性。",
+  "",
+  "## 最终总结（约100字）",
+  "（必须是全文最后一段：在下一行写 80–140 个汉字，总结你前面所有推断与建议。用日常语言，简单直接，避免专业术语与故弄玄虚。）",
 ].join("\n");
 
 export function getDecodeSystemPrompt(mode: DecodeMode) {
-  if (mode === "llm_direct") return DIRECT_SYSTEM_PROMPT;
   if (mode === "model_current") return MODEL_SYSTEM_PROMPT;
+  if (mode === "cyber") return CYBER_SYSTEM_PROMPT;
   return BASE_SYSTEM_PROMPT;
 }
 
 function buildContextGuide(mode: DecodeMode) {
-  if (mode === "llm_direct") {
-    return [
-      "你将收到一个对象，形如：{ logic?: string, payload: ... }。",
-      "",
-      "payload（直推演·当前输入）的字段说明（缺失就写“缺失”）：",
-      "- payload.input.question：输入页「目标/问题」文本。",
-      "- payload.input.nickname：输入页「标识（可选）」文本（可为空，用于区分轮次/引入称呼扰动 N）。",
-      "- payload.input.datetimeISO：输入页「参考时间」的 ISO 时间字符串。",
-      "- payload.obs.passive.hash：被动观测哈希（设备/系统/网络/偏好等摘要）。",
-      "- payload.obs.passive.fp8：被动观测 8 维指纹（0..1，顺序固定）。",
-      "- payload.obs.enhanced：增强观测状态对象（见 enhanced 字段）。",
-      "- payload.model：本机宇宙常量模型快照（v/salt/runCount/theta16/policy/likes/updatedAt）。",
-      "- payload.dashboard：模型仪表盘摘要（runCount/progress01/likesRatio01/scoreMean/scoreStd/omegaFiniteRatio01/theta16/thetaStability01/enhancedStatus/recentSignature）。",
-    ].join("\n");
-  }
   if (mode === "model_current") {
     return [
       "你将收到一个对象，形如：{ v: 1, model, dashboard, enhanced, recent }。",
@@ -154,6 +157,22 @@ function buildContextGuide(mode: DecodeMode) {
       "- dashboard：仪表盘摘要（runCount/progress01/likesRatio01/scoreMean/scoreStd/omegaFiniteRatio01/feedbackBias/feedbackCounts/theta16/thetaStability01/enhancedStatus/recentSignature）。",
       "- enhanced：增强观测状态（enabled/geo/motion/lastGeo?/lastMotion?）。",
       "- recent[]：最近若干次历史摘要（question/score/omega/signature/feedback）。",
+    ].join("\n");
+  }
+  if (mode === "cyber") {
+    return [
+      "你将收到一个对象，形如：{ v: 1, meta, cyberProfile, model, dashboard, enhanced, obs }。",
+      "",
+      "- meta.createdAt：本次算卦触发时间戳（毫秒）。",
+      "- cyberProfile：赛博字段画像（用户可选填 + 本机补全），包含：anchor/userInput/deviceSignals/derived/provenance。",
+      "  - cyberProfile.derived.trueSolarAnchor：基于起卦时刻的真太阳时校正结果。",
+      "  - cyberProfile.derived.birth.trueSolarBirth：用于排盘的真太阳时出生基准（用户缺失则以起卦为基准）。",
+      "  - cyberProfile.derived.birth.pillars：四柱（year/month/day/time）。",
+      "  - cyberProfile.provenance.*：字段来源与可信度（source/confidence/evidence）。",
+      "- model：UniverseModelV1 | null（包含 salt/runCount/theta16/policy/likes/updatedAt 等）。",
+      "- dashboard：仪表盘摘要（runCount/progress01/likesRatio01/scoreMean/scoreStd/omegaFiniteRatio01/feedbackBias/feedbackCounts/theta16/thetaStability01/enhancedStatus/recentSignature）。",
+      "- enhanced：增强观测状态（enabled/geo/motion/lastGeo?/lastMotion?）。",
+      "- obs.passive：被动观测摘要（例如语言/时区/平台/UA 等）。",
     ].join("\n");
   }
   return [
@@ -187,25 +206,7 @@ function buildContextGuide(mode: DecodeMode) {
 
 export function buildDecodeUserContent(mode: DecodeMode, context: unknown) {
   const guide = buildContextGuide(mode);
-  if (mode === "llm_direct") {
-    const obj = context as { logic?: string; payload?: unknown };
-    const logic = typeof obj?.logic === "string" ? obj.logic : "";
-    const payload = obj?.payload ?? context;
-    const pretty = JSON.stringify(payload, null, 2);
-    return [
-      "## 参数说明",
-      "",
-      guide,
-      "",
-      logic ? `## 项目运行逻辑\n\n${logic}\n` : "",
-      "## 原始数据包",
-      "",
-      "```json",
-      pretty,
-      "```",
-    ].join("\n");
-  }
-  const title = mode === "model_current" ? "GUA Model Snapshot" : "DecodePacketV1";
-  const pretty = JSON.stringify(context, null, 2);
+  const title = mode === "model_current" ? "GUA Model Snapshot" : mode === "cyber" ? "GUA Cyber Snapshot" : "DecodePacketV1";
+  const pretty = mode === "cyber" ? JSON.stringify(context) : JSON.stringify(context, null, 2);
   return ["## 参数说明", "", guide, "", `## ${title}`, "", "```json", pretty, "```"].join("\n");
 }

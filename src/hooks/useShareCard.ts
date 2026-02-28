@@ -6,7 +6,7 @@ import html2canvas from "html2canvas";
 import type { UniverseModelV1 } from "@/types/universeModel";
 import { copyPngToClipboard, downloadBlob, type ShareCardTemplate } from "@/utils/shareCard";
 
-type DecodeMode = "result_current" | "model_current" | "result_history" | "llm_direct";
+type DecodeMode = "result_current" | "model_current" | "result_history" | "cyber";
 
 type DirectSource = "current" | "last" | "history";
 
@@ -44,6 +44,46 @@ function extractSectionConclusionFromMarkdown(markdown: string, sectionTitle: st
     return t.length > 220 ? `${t.slice(0, 220)}…` : t;
   }
   return previewFromMarkdown(slice.join("\n"));
+}
+
+function extractNextBodyLineFromHeadings(markdown: string, headingTitles: string[]) {
+  const raw = unwrapOuterMarkdownFence(markdown || "");
+  const lines = raw.split("\n");
+  const start = lines.findIndex((l) => {
+    const t = l.trim();
+    if (!t.startsWith("## ")) return false;
+    const title = t.slice(3).trim();
+    return headingTitles.some((h) => title === h || title.startsWith(h));
+  });
+  if (start < 0) return previewFromMarkdown(raw);
+  for (let i = start + 1; i < Math.min(lines.length, start + 18); i += 1) {
+    const t = (lines[i] ?? "").trim();
+    if (!t) continue;
+    if (t.startsWith("#") || t.startsWith(">")) continue;
+    return t.length > 220 ? `${t.slice(0, 220)}…` : t;
+  }
+  return previewFromMarkdown(raw);
+}
+
+function extractFirstBulletFromHeadings(markdown: string, headingTitle: string) {
+  const raw = unwrapOuterMarkdownFence(markdown || "");
+  const lines = raw.split("\n");
+  const start = lines.findIndex((l) => {
+    const t = l.trim();
+    if (!t.startsWith("## ")) return false;
+    const title = t.slice(3).trim();
+    return title === headingTitle || title.startsWith(headingTitle);
+  });
+  if (start < 0) return previewFromMarkdown(raw);
+  for (let i = start + 1; i < Math.min(lines.length, start + 24); i += 1) {
+    const t = (lines[i] ?? "").trim();
+    if (!t) continue;
+    if (t.startsWith("#")) break;
+    const clean = t.startsWith("-") ? t.slice(1).trim() : t;
+    if (!clean) continue;
+    return clean.length > 220 ? `${clean.slice(0, 220)}…` : clean;
+  }
+  return previewFromMarkdown(raw);
 }
 
 export type SharePosterPropsV1 = {
@@ -141,11 +181,11 @@ export function useShareCard(args: {
     typeof window !== "undefined" && typeof navigator?.clipboard?.write === "function" && typeof ClipboardItem !== "undefined";
 
   const shareCardDefaultTemplate = useMemo<ShareCardTemplate>(() => {
-    if (args.decodeMode === "llm_direct") return "ai_direct";
+    if (args.decodeMode === "cyber") return args.decodeAnswerMarkdown.trim() ? "divination_decode" : "model_snapshot";
     if (args.decodeMode === "model_current") return "model_snapshot";
     if (!args.decodePacket) return "model_snapshot";
     return "divination_decode";
-  }, [args.decodeMode, args.decodePacket]);
+  }, [args.decodeAnswerMarkdown, args.decodeMode, args.decodePacket]);
 
   useEffect(() => {
     if (!shareCardOpen) return;
@@ -189,8 +229,7 @@ export function useShareCard(args: {
     const baseQuestion =
       args.question.trim() ||
       args.decodeSummary?.questionText ||
-      (typeof input?.question === "string" ? input.question : "") ||
-      (args.decodeMode === "llm_direct" && args.directSource === "current" ? args.question.trim() : "");
+      (typeof input?.question === "string" ? input.question : "");
 
     const sigFromPacket = typeof pkt?.result?.signature === "string" ? pkt.result.signature : "";
     const omegaFromPacket = typeof pkt?.result?.omega === "string" ? pkt.result.omega : "";
@@ -203,27 +242,7 @@ export function useShareCard(args: {
     const rootDigest = typeof pkt?.hid === "string" ? (args.history.find((x) => x.id === pkt.hid)?.root ?? "") : "";
 
     const qrUrlText = shareCardQrUrl.replace(/^https?:\/\//, "");
-    const modeLabel = shareCardTemplate === "ai_direct" ? "AI 直推" : shareCardTemplate === "model_snapshot" ? "模型快照" : "推演解码";
-
-    if (shareCardTemplate === "ai_direct") {
-      const conclusionQa = extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "问题解答");
-      const conclusionInsight = extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "模型启示");
-      return {
-        template: "ai_direct" as const,
-        modeLabel,
-        localTimeText,
-        utcTimeText,
-        qrUrlText,
-        headline: "一句问题，得到可晒的模型解码。",
-        question: baseQuestion,
-        conclusionQa,
-        conclusionInsight,
-        score,
-        omega,
-        signature,
-        formulaLatex: formulaFromPacket || undefined,
-      };
-    }
+    const modeLabel = shareCardTemplate === "model_snapshot" ? "模型快照" : args.decodeMode === "cyber" ? "赛博算卦" : "推演解码";
 
     if (shareCardTemplate === "model_snapshot") {
       const m =
@@ -261,10 +280,16 @@ export function useShareCard(args: {
       localTimeText,
       utcTimeText,
       qrUrlText,
-      headline: "可复算 · 可追溯 · 本机宇宙常量",
+      headline: args.decodeMode === "cyber" ? "读取本机快照 · 随机方向推演" : "可复算 · 可追溯 · 本机宇宙常量",
       question: baseQuestion,
-      conclusionQa: extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "问题解答"),
-      conclusionInsight: extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "模型启示"),
+      conclusionQa:
+        args.decodeMode === "cyber"
+          ? extractNextBodyLineFromHeadings(args.decodeAnswerMarkdown, ["结论", "结论（约100字）"])
+          : extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "问题解答"),
+      conclusionInsight:
+        args.decodeMode === "cyber"
+          ? extractFirstBulletFromHeadings(args.decodeAnswerMarkdown, "你可以怎么做")
+          : extractSectionConclusionFromMarkdown(args.decodeAnswerMarkdown, "模型启示"),
       score,
       omega,
       signature,
@@ -276,7 +301,6 @@ export function useShareCard(args: {
     args.decodeMode,
     args.decodePacket,
     args.decodeSummary,
-    args.directSource,
     args.history,
     args.modelRef,
     args.question,

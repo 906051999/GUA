@@ -1,7 +1,7 @@
 "use client";
 
 import type { MutableRefObject, RefObject } from "react";
-import { Alert, Badge, Box, Button, Group, Modal, Paper, Stack, Text } from "@mantine/core";
+import { Alert, Badge, Box, Button, Group, Modal, Paper, Stack, Text, type SegmentedControlItem } from "@mantine/core";
 import { DecodePromptPanel, type DecodeMode, type DirectSource, type HistoryItemV1 as PromptHistoryItemV1 } from "@/components/DecodePromptPanel";
 import { MarkdownStream } from "@/components/MarkdownStream";
 
@@ -35,6 +35,14 @@ type DecodeAiHistoryItemV1 = {
 export function DecodeTabContent({
   decodeMode,
   setDecodeMode,
+  modeOptions,
+  showPromptPanel,
+  titleText,
+  backLabel,
+  startLabel,
+  outputTitle,
+  emptyOutputText,
+  streamingOutputText,
   directSource,
   setDirectSource,
   decodeHistoryPickId,
@@ -67,6 +75,14 @@ export function DecodeTabContent({
 }: {
   decodeMode: DecodeMode;
   setDecodeMode: (mode: DecodeMode) => void;
+  modeOptions?: SegmentedControlItem[];
+  showPromptPanel?: boolean;
+  titleText?: string;
+  backLabel?: string;
+  startLabel?: string;
+  outputTitle?: string;
+  emptyOutputText?: string;
+  streamingOutputText?: string;
   directSource: DirectSource;
   setDirectSource: (source: DirectSource) => void;
   decodeHistoryPickId: string | null;
@@ -101,19 +117,29 @@ export function DecodeTabContent({
   scrollDecodeToBottom: () => void;
   scrollReasonToBottom: () => void;
 }) {
+  const outputTitleText = outputTitle ?? "解码输出";
+  const startText = startLabel ?? "开始解码";
+  const emptyText = emptyOutputText ?? "";
+  const streamingText = streamingOutputText ?? "正在解码…";
+  const shouldShowPromptPanel = showPromptPanel ?? true;
   return (
     <Stack gap="md">
-      <DecodePromptPanel
-        decodeMode={decodeMode}
-        setDecodeMode={setDecodeMode}
-        directSource={directSource}
-        setDirectSource={setDirectSource}
-        decodeHistoryPickId={decodeHistoryPickId}
-        setDecodeHistoryPickId={setDecodeHistoryPickId}
-        history={history}
-        onBack={onBack}
-        summaryText={summaryText}
-      />
+      {shouldShowPromptPanel ? (
+        <DecodePromptPanel
+          decodeMode={decodeMode}
+          setDecodeMode={setDecodeMode}
+          modeOptions={modeOptions}
+          titleText={titleText}
+          backLabel={backLabel}
+          directSource={directSource}
+          setDirectSource={setDirectSource}
+          decodeHistoryPickId={decodeHistoryPickId}
+          setDecodeHistoryPickId={setDecodeHistoryPickId}
+          history={history}
+          onBack={onBack}
+          summaryText={summaryText}
+        />
+      ) : null}
 
       {decodeError ? (
         <Alert color="gray" variant="light" radius="md" className="gua-alert">
@@ -124,7 +150,7 @@ export function DecodeTabContent({
       <Paper radius="md" p="md" className="gua-panel">
         <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Text fw={600} fz="sm">
-            解码输出
+            {outputTitleText}
           </Text>
           <Group gap="xs" wrap="wrap" style={{ justifyContent: "flex-end", flex: "1 1 360px" }}>
             <Group gap="xs" wrap="wrap">
@@ -162,7 +188,7 @@ export function DecodeTabContent({
                 停止
               </Button>
               <Button radius="xl" onClick={onDecodeStart} disabled={!decodePacket || decodeStreaming}>
-                {decodeStreaming ? "解码中…" : "开始解码"}
+                {decodeStreaming ? `${startText}中…` : startText}
               </Button>
             </Group>
           </Group>
@@ -200,7 +226,7 @@ export function DecodeTabContent({
             if (decodeAuto && !isNearBottom(node, 48)) setDecodeAuto(false);
           }}
         >
-          <MarkdownStream content={decodeAnswerMarkdown || (decodeStreaming ? "正在解码…" : "")} className="gua-stream-body-inner" />
+          <MarkdownStream content={decodeAnswerMarkdown || (decodeStreaming ? streamingText : emptyText)} className="gua-stream-body-inner" />
         </Box>
       </Paper>
     </Stack>
@@ -250,7 +276,7 @@ export function DecodeHistoryModals({
               </Badge>
             </Group>
             <Text mt="xs" fz="xs" c="dimmed">
-              记录每次点击「开始解码」触发的 AI 解码请求与输出。仅保存在本地。
+              记录每次触发 AI 请求与输出（包括解码与赛博算卦）。仅保存在本地。
             </Text>
           </Paper>
 
@@ -270,7 +296,9 @@ export function DecodeHistoryModals({
                           ? "模型"
                           : item.mode === "result_history"
                             ? "历史结果"
-                            : "直推演";
+                            : item.mode === "cyber"
+                              ? "赛博算卦"
+                              : "—";
                     const preview =
                       previewFromMarkdown(item.response.answer) ||
                       (item.response.error ? `错误：${item.response.error}` : item.response.aborted ? "已取消" : "—");

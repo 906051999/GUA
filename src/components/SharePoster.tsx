@@ -7,7 +7,7 @@ import type { UniverseModelV1 } from "@/types/universeModel";
 import { UniverseModelBoard } from "@/components/UniverseModelBoard";
 import styles from "./SharePoster.module.css";
 
-export type SharePosterTemplate = "ai_direct" | "divination_decode" | "model_snapshot";
+export type SharePosterTemplate = "divination_decode" | "model_snapshot";
 
 export type SharePosterProps = {
   template: SharePosterTemplate;
